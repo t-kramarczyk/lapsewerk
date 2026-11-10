@@ -50,4 +50,4 @@ Release-Prüfern geschliffen.
 - Bleibende Lichtwechsel (Mondaufgang, Laternen) werden vom Deflicker etwas vorgezogen; die Handkurve hilft.
 - Farbe weicht bei echten Raws von verbreiteten Raw-Entwicklern ab (A7 IV leicht lila, A6700 ohne Kamera-Matrix);
   In eigenen Messungen an zwei Serien zeigte Lapsewerk 3–4× weniger Restflackern als Filme derselben
-  Raws aus einem verbreiteten Bezahl-Ablauf (mit dessen damaligen Einstellungen).
+  Raws aus einem anderen verbreiteten Zeitraffer-Ablauf (mit den damaligen Einstellungen).
