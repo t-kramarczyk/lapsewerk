@@ -1,0 +1,74 @@
+# Checks every push and pull request: formatting, lints and tests on Linux; on macOS also the
+# AVFoundation encoder helper (encoder.swift), real ProRes/HEVC/HDR movies and a render end to end.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch or pull request stops the run before it (macOS minutes count tenfold).
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace --no-fail-fast
+      - name: File readers fuzzed (100 000 inputs)
+        run: cargo run --release -p lapsewerk-develop --example fuzz_readers -- 100000
+
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Tests, with the encoder helper and real movies
+        run: cargo test --workspace --no-fail-fast
+      - name: Render end to end (SDR, HDR PQ, HDR HLG, night sky)
+        run: |
+          cargo build --release -p lapsewerk-cli
+          bin=target/release/lapsewerk
+          mkdir -p "$RUNNER_TEMP/frames"
+          for i in $(seq -w 0 23); do
+            cp crates/develop/tests/data/frame.jpg "$RUNNER_TEMP/frames/f$i.jpg"
+            printf 'frame %s' "$i" >> "$RUNNER_TEMP/frames/f$i.jpg"   # unique files
+          done
+          "$bin" import "$RUNNER_TEMP/frames"
+          "$bin" render "$RUNNER_TEMP/frames" --out "$RUNNER_TEMP/sdr.mov" --size 48x32 --verify --csv "$RUNNER_TEMP/a.csv"
+          "$bin" render "$RUNNER_TEMP/frames" --out "$RUNNER_TEMP/pq.mov" --size 48x32 --hdr pq --codec hevc
+          "$bin" render "$RUNNER_TEMP/frames" --out "$RUNNER_TEMP/hlg.mov" --size 48x32 --hdr hlg
+          "$bin" render "$RUNNER_TEMP/frames" --out "$RUNNER_TEMP/night.mov" --size 48x32 --passes 1 \
+            --denoise 1 --light-pollution 1 --reduce-stars 0.5 --star-trails 0
+          # ProRes PQ with a timecode track: HDR10 boxes and the measured light level in the file.
+          "$bin" render "$RUNNER_TEMP/frames" --out "$RUNNER_TEMP/pqtc.mov" --size 48x32 --hdr pq \
+            --timecode 01:00:00:00 | tee "$RUNNER_TEMP/pqtc.txt"
+          "$bin" render "$RUNNER_TEMP/frames" --out "$RUNNER_TEMP/pq2.mov" --size 48x32 --hdr pq --codec hevc \
+            | tee "$RUNNER_TEMP/pq2.txt"
+          python3 .github/check_movie.py "$RUNNER_TEMP/pqtc.mov" "$RUNNER_TEMP/pqtc.txt" --timecode 90000
+          python3 .github/check_movie.py "$RUNNER_TEMP/pq2.mov" "$RUNNER_TEMP/pq2.txt"
+          ls -la "$RUNNER_TEMP"/*.mov
+          for m in sdr pq hlg night pqtc; do
+            test -s "$RUNNER_TEMP/$m.mov"
+          done
+          if ls -a "$RUNNER_TEMP" | grep -q partial; then echo "::error::partial movie left behind"; exit 1; fi
