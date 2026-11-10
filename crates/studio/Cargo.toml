@@ -1,0 +1,18 @@
+[package]
+name = "lapsewerk-studio"
+description = "Lapsewerk's workflow: open, measure, correct and render a sequence, with progress, time left and cancelling (shared by the command line and the app)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+lapsewerk-core = { path = "../core" }
+lapsewerk-develop = { path = "../develop" }
+lapsewerk-video = { path = "../video" }
+serde_json = { workspace = true }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }

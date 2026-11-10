@@ -1,0 +1,28 @@
+[package]
+name = "lapsewerk-app"
+description = "Lapsewerk desktop app: time-lapse in six steps, with preview and brightness curve"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "lapsewerk-app"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+lapsewerk-core = { path = "../../crates/core" }
+lapsewerk-develop = { path = "../../crates/develop" }
+lapsewerk-studio = { path = "../../crates/studio" }
+lapsewerk-video = { path = "../../crates/video" }
+serde_json = { workspace = true }
+rfd = { workspace = true }
+egui = { workspace = true }
+eframe = { workspace = true, features = ["default_fonts", "wgpu", "glow", "accesskit", "wayland", "x11"] }
+lightcraft-ui-egui = { workspace = true }
+image = { version = "0.25", default-features = false, features = ["png"] }

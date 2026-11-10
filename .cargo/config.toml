@@ -1,0 +1,3 @@
+[net]
+# LightCraft is a git dependency: fetched with the git CLI (proxies and credentials as git has them).
+git-fetch-with-cli = true

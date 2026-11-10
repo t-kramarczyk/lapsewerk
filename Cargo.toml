@@ -1,0 +1,60 @@
+[workspace]
+resolver = "3"
+members = ["crates/core", "crates/develop", "crates/video", "crates/studio", "apps/lapsewerk-cli", "apps/lapsewerk-app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "GPL-3.0-or-later"
+publish = false
+
+[workspace.dependencies]
+# LightCraft with the Lapsewerk patches, pinned; update deliberately (docs/lightcraft.md).
+lightcraft-engine = { git = "https://github.com/t-kramarczyk/lightcraft-lapsewerk", rev = "3ae38d6088b4288eb505d8761a2183575fbf2051", default-features = false }
+lightcraft-raw = { git = "https://github.com/t-kramarczyk/lightcraft-lapsewerk", rev = "3ae38d6088b4288eb505d8761a2183575fbf2051" }
+lightcraft-meta = { git = "https://github.com/t-kramarczyk/lightcraft-lapsewerk", rev = "3ae38d6088b4288eb505d8761a2183575fbf2051" }
+lightcraft-geom = { git = "https://github.com/t-kramarczyk/lightcraft-lapsewerk", rev = "3ae38d6088b4288eb505d8761a2183575fbf2051" }
+lightcraft-codecs = { git = "https://github.com/t-kramarczyk/lightcraft-lapsewerk", rev = "3ae38d6088b4288eb505d8761a2183575fbf2051" }
+lightcraft-raster = { git = "https://github.com/t-kramarczyk/lightcraft-lapsewerk", rev = "3ae38d6088b4288eb505d8761a2183575fbf2051" }
+lightcraft-color = { git = "https://github.com/t-kramarczyk/lightcraft-lapsewerk", rev = "3ae38d6088b4288eb505d8761a2183575fbf2051" }
+serde_json = "1"
+# The desktop app: egui like LightCraft, on LightCraft's reviewed egui fork (patch below) so its
+# CPU renderer (`lightcraft_ui_egui::softpaint`, headless screenshots) draws the same types.
+egui = { version = "0.37", default-features = false, features = ["default_fonts"] }
+eframe = { version = "0.37", default-features = false }
+lightcraft-ui-egui = { git = "https://github.com/t-kramarczyk/lightcraft-lapsewerk", rev = "3ae38d6088b4288eb505d8761a2183575fbf2051" }
+rfd = "0.17"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "warn"
+
+# Dependencies (LightCraft, egui, wgpu …) without debug info in dev builds: a fraction of the disk
+# and link time; Lapsewerk's own crates keep theirs.
+[profile.dev.package."*"]
+debug = false
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+# Shipped programs without symbols (about half the size); a panic still names its place.
+strip = "symbols"
+
+# LightCraft's egui and winit forks, the commits LightCraft pins (copied from its Cargo.toml).
+[patch.crates-io]
+ecolor = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+emath = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+epaint = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+epaint_default_fonts = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui-winit = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui-wgpu = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui_glow = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+eframe = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+winit = { git = "https://github.com/storytold/winit.git", rev = "a517b3846ee8457d84ee4975110bfda6797c44dc" }

@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Lapsewerk
+GenericName=Timelapse editor
+GenericName[de]=Zeitraffer-Werkstatt
+Comment=Keyframes, day-to-night ramps, deflicker and astro tools for timelapse series
+Comment[de]=Keyframes, Tag-Nacht-Rampen, Deflicker und Astro-Werkzeuge für Zeitraffer
+Exec=lapsewerk-app %f
+Icon=lapsewerk
+StartupWMClass=lapsewerk-app
+Terminal=false
+Categories=Graphics;Photography;
+Keywords=timelapse;zeitraffer;deflicker;holy grail;raw;

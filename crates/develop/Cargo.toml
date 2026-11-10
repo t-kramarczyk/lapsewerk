@@ -1,0 +1,24 @@
+[package]
+name = "lapsewerk-develop"
+description = "Lapsewerk's bridge to LightCraft: open a sequence, read keyframe settings, build per-frame render jobs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+lapsewerk-core = { path = "../core" }
+lightcraft-engine = { workspace = true }
+lightcraft-meta = { workspace = true }
+lightcraft-geom = { workspace = true }
+lightcraft-raster = { workspace = true }
+lightcraft-color = { workspace = true }
+lightcraft-raw = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+lightcraft-codecs = { workspace = true }

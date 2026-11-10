@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Lapsewerk's symbol on the macOS icon grid (824 px tile, 100 px margin); original work, GPL-3.0-or-later. -->
+  <defs>
+    <clipPath id="sky"><rect x="100" y="100" width="824" height="460"/></clipPath>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6b4522"/><stop offset="1" stop-color="#4a2f16"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" ry="185" fill="url(#g)"/>
+  <circle cx="512" cy="560" r="216" fill="#ff9f43" clip-path="url(#sky)"/>
+  <line x1="215" y1="560" x2="809" y2="560" stroke="#ff9f43" stroke-width="32" stroke-linecap="round"/>
+</svg>

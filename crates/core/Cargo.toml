@@ -1,0 +1,11 @@
+[package]
+name = "lapsewerk-core"
+description = "Lapsewerk core: sequence model, keyframe interpolation, exposure ramp compensation and deflicker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

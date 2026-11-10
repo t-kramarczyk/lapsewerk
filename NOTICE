@@ -1,0 +1,12 @@
+Lapsewerk
+Copyright (C) 2026 Tim Kramarczyk
+
+Licensed under the GNU General Public License, version 3 or later (see LICENSE).
+
+Third-party components:
+- LightCraft (https://github.com/storytold/lightcraft), MIT OR Apache-2.0, used under Apache-2.0.
+  Built from the snapshot pinned in Cargo.toml; its LICENSE-MIT, LICENSE-APACHE and NOTICE files ship with
+  every distribution of Lapsewerk.
+- Every other crate Lapsewerk is built from, with its licence and the licence texts it ships (the fonts
+  in the user interface included: OFL 1.1, Ubuntu Font Licence 1.0): THIRD-PARTY-LICENSES.txt, generated
+  by scripts/third_party_licenses.py.

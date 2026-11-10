@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <!-- Lapsewerk's symbol: a sun on the horizon, as the app draws it (original work, GPL-3.0-or-later like the code). -->
+  <defs>
+    <clipPath id="sky"><rect x="0" y="0" width="256" height="174"/></clipPath>
+  </defs>
+  <rect x="0" y="0" width="256" height="256" rx="72" ry="72" fill="#5a3a1c"/>
+  <circle cx="128" cy="174" r="67" fill="#ff9f43" clip-path="url(#sky)"/>
+  <line x1="36" y1="174" x2="220" y2="174" stroke="#ff9f43" stroke-width="10" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,23 @@
+[package]
+name = "lapsewerk-cli"
+description = "Lapsewerk command line: analyse a sequence (timing, exposure steps, flicker)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "lapsewerk"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+lapsewerk-core = { path = "../../crates/core" }
+lapsewerk-develop = { path = "../../crates/develop" }
+lapsewerk-video = { path = "../../crates/video" }
+lapsewerk-studio = { path = "../../crates/studio" }
+# Ctrl-C and SIGTERM, to delete a partial movie (the workspace forbids the unsafe code a handler needs).
+ctrlc = { version = "3.4", features = ["termination"] }
