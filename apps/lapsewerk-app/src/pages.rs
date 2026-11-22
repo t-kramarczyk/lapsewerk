@@ -1902,9 +1902,13 @@ fn controls(app: &mut App, ui: &mut egui::Ui) {
         ui.add_space(4.0);
         let label_w = 112.0;
         let inner_w = ui.available_width();
+        // The scroll bar always shown: when it came and went (a line like "unsaved changes" above,
+        // a group opened), the width changed under a slider being dragged, so its handle jumped
+        // away from the pointer and back.
         egui::ScrollArea::vertical()
             .id_salt("keyframe-controls")
             .auto_shrink([false, true])
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
             .max_width(inner_w)
             .show(ui, |ui| {
                 ui.set_max_width(inner_w - 12.0);
@@ -1960,8 +1964,10 @@ fn controls(app: &mut App, ui: &mut egui::Ui) {
                         .id_salt(("group", g.en))
                         .default_open(g.open)
                         .show(ui, |ui| {
+                            // From the panel's fixed width, never from what is left in it: that
+                            // changes while dragging (the value's width, the scroll bar).
                             ui.spacing_mut().slider_width =
-                                (ui.available_width() - label_w - 100.0).max(60.0);
+                                (inner_w - 12.0 - ui.spacing().indent - label_w - 100.0).max(60.0);
                             for spec in specs {
                                 let value = lapsewerk_develop::controls::get(&settings, spec.id)
                                     .unwrap_or(spec.default);

@@ -1,6 +1,21 @@
 # Änderungen
 
-## 0.1.0 (Vorabversion, noch nicht veröffentlicht)
+## 0.2.0 (22.11.2026)
+
+### LightCraft auf dem Stand vom 22.11.2026
+- Entwickelt mit dem aktuellen LightCraft (Rechenweg 10 statt 2): deutlich weniger Farbrauschen in Nachtserien,
+  schonendere Lichter, bessere Lichter-/Tiefen-Regler ohne Blockartefakte, Korrekturen bei Objektiven und
+  einzelnen Kameras, schnelleres Lesen von Fuji-Dateien. Neue Projekte und Keyframes aus `crs:`-Werten sehen
+  dadurch sauberer und etwas satter aus als mit 0.1.0; Keyframes mit gespeicherten LightCraft-Einstellungen behalten
+  ihren Rechenweg.
+- Alle Keyframes einer Serie rechnen mit demselben Rechenweg (dem neuesten unter ihnen): kein Sprung an einem
+  Keyframe, der aus einer anderen Quelle stammt.
+
+### App
+- Regler bleiben beim Scrollen ruhig (Bildlaufleiste immer sichtbar, feste Breite), Oberfläche immer dunkel.
+- Restzeit aus dem Tempo der letzten 45 Sekunden statt aus dem Durchschnitt des ganzen Laufs.
+
+## 0.1.0 (10.11.2026)
 
 Erste vollständige Fassung, in dreißig Testrunden mit Amateur-, Hobby-, Profi-, Astro-, Postproduktions- und
 Release-Prüfern geschliffen.

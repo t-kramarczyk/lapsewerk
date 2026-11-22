@@ -26,7 +26,10 @@ pub const RADIUS: u8 = 10;
 /// Installs fonts (Inter, from LightCraft) and the style.
 pub fn install(ctx: &egui::Context) {
     ctx.set_fonts(lightcraft_ui_egui::theme::font_definitions(&[]));
-    ctx.global_style_mut(|style| {
+    // Always dark: the surfaces are painted dark, so the text must be light even when macOS
+    // is set to the light appearance (otherwise egui follows the system and draws dark text).
+    ctx.set_theme(egui::ThemePreference::Dark);
+    ctx.all_styles_mut(|style| {
         style.text_styles = [
             (TextStyle::Heading, FontId::new(26.0, FontFamily::Proportional)),
             (TextStyle::Body, FontId::new(15.0, FontFamily::Proportional)),

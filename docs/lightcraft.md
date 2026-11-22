@@ -2,7 +2,7 @@
 
 Lapsewerk develops frames with [LightCraft](https://github.com/storytold/lightcraft) (MIT OR Apache-2.0),
 used as a git dependency pinned to one commit of [`t-kramarczyk/lightcraft-lapsewerk`](https://github.com/t-kramarczyk/lightcraft-lapsewerk) (upstream
-`5194cc2` plus additive patches, see its `LAPSEWERK.md`). Cargo fetches it with the git CLI (`.cargo/config.toml`).
+`fdcfc4e5a`, 22.11.2026, plus additive patches, see its `LAPSEWERK.md`). Cargo fetches it with the git CLI (`.cargo/config.toml`).
 
 ## What is used
 
@@ -29,6 +29,10 @@ Nothing is written by these calls: no LightCraft library, no sidecars.
   into a sidecar.
 - **White balance.** Keyframes take white balance as explicit Kelvin/tint; "as shot" would follow the camera's
   auto white balance frame by frame and flicker.
+- **Process versions.** New settings take LightCraft's latest process (V10 since the 2026-11 update; 0.1.0 rendered
+  with V2). Settings saved with LightCraft's full JSON keep theirs; `crs:` keyframes and frames without a sidecar
+  take the latest. `Sequence::plan_of` puts every keyframe on the newest process among them (`one_process`), so a
+  sequence never switches its rendering at a keyframe.
 - **Updating the pin.** Read LightCraft's changes since the pinned commit (develop model, `process` versions,
   render API), update `rev`, run `cargo test` and the analysis on the reference sequence, compare the CSV.
 - **Video colour.** Frames are rendered as 16-bit sRGB (gamut-mapped by LightCraft) and written unchanged,

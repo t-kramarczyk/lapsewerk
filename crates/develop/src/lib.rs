@@ -1101,6 +1101,7 @@ impl Sequence {
         // them in one order, those it lacks with no effect (so they fade in or out).
         let mut settings: Vec<DevelopSettings> = bases.iter().map(|(_, d)| d.clone()).collect();
         masks::align(&mut settings);
+        one_process(&mut settings);
         for ((_, d), aligned) in bases.iter_mut().zip(settings) {
             *d = aligned;
         }
@@ -1249,6 +1250,17 @@ impl Sequence {
 }
 
 /// Whether `settings` has a mask with a sky part.
+/// Every keyframe on one rendering process, the newest any of them names: keyframes on different
+/// processes (one saved with LightCraft's full settings, one read from `crs:` values) would
+/// otherwise switch how the frames are developed at a keyframe, a visible jump.
+fn one_process(settings: &mut [DevelopSettings]) {
+    if let Some(newest) = settings.iter().map(|d| d.process).max() {
+        for d in settings {
+            d.process = newest;
+        }
+    }
+}
+
 fn has_sky_mask(settings: &DevelopSettings) -> bool {
     settings.masks.iter().any(|m| {
         m.components
@@ -2896,6 +2908,18 @@ mod tests {
         );
         assert!(err.to_string().contains("the same file as"));
         let _ = std::fs::remove_dir_all(paths[0].parent().unwrap());
+    }
+
+    #[test]
+    fn keyframes_share_one_process() {
+        use lightcraft_engine::develop::ProcessVersion;
+        let old = DevelopSettings { process: ProcessVersion(2), ..DevelopSettings::default() };
+        let new = DevelopSettings::default();
+        let mut all = vec![old.clone(), new.clone(), old];
+        one_process(&mut all);
+        assert!(all.iter().all(|d| d.process == new.process), "{all:?}");
+        let mut none: Vec<DevelopSettings> = Vec::new();
+        one_process(&mut none);
     }
 
     #[test]

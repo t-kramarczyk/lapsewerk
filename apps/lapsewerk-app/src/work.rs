@@ -2,6 +2,7 @@
 //! step, how far it is and the time left, cancellable. The UI polls [`Task::status`] every frame
 //! and is woken (`request_repaint`) whenever something changes.
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -11,6 +12,22 @@ use std::time::{Duration, Instant};
 use lapsewerk_core::sequence::Timing;
 use lapsewerk_develop::{DevelopPlan, Sequence};
 use lapsewerk_studio::{Analysis, Corrected, Reporter, Step};
+
+/// How far back the pace for the time left is taken.
+const PACE_WINDOW: Duration = Duration::from_secs(45);
+
+/// Time left of the current step: at the pace of the last [`PACE_WINDOW`] once that spans a few
+/// seconds and some frames, before that at the average since the step started.
+fn time_left(i: &Inner) -> Option<Duration> {
+    if let Some(&(t0, d0)) = i.recent.front() {
+        let span = t0.elapsed().as_secs_f64();
+        let done = i.done.saturating_sub(d0);
+        if span >= 5.0 && done >= 4 && i.done <= i.total {
+            return Duration::try_from_secs_f64(span / done as f64 * (i.total - i.done) as f64).ok();
+        }
+    }
+    lapsewerk_studio::estimate(i.step_started.elapsed(), i.done, i.total)
+}
 
 /// What a task is doing, for the status bar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,6 +106,9 @@ struct Inner {
     done: usize,
     total: usize,
     step_started: Instant,
+    /// (when, done) of the step's recent progress: the time left follows the recent pace, not the
+    /// average since the start (the first frames are slow while the thumbnails still load).
+    recent: VecDeque<(Instant, usize)>,
     round: usize,
     notes: Vec<String>,
     outcome: Option<Outcome>,
@@ -117,9 +137,16 @@ impl Reporter for Shared {
                 // The same step from the start again (the check pass checking its corrections).
                 i.round += 1;
             }
+            let now = Instant::now();
             if i.doing != Doing::Step(step) || done == 0 {
                 i.doing = Doing::Step(step);
-                i.step_started = Instant::now();
+                i.step_started = now;
+                i.recent.clear();
+            }
+            i.recent.push_back((now, done));
+            // Keep one sample older than the window, so the pace spans all of it.
+            while i.recent.len() > 2 && i.recent.get(1).is_some_and(|(t, _)| now.duration_since(*t) > PACE_WINDOW) {
+                i.recent.pop_front();
             }
             i.done = done;
             i.total = total;
@@ -152,6 +179,7 @@ impl Task {
                 done: 0,
                 total: 0,
                 step_started: Instant::now(),
+                recent: VecDeque::new(),
                 round: 1,
                 notes: Vec::new(),
                 outcome: None,
@@ -185,7 +213,7 @@ impl Task {
             doing: i.doing,
             done: i.done,
             total: i.total,
-            left: lapsewerk_studio::estimate(i.step_started.elapsed(), i.done, i.total).map(|left| {
+            left: time_left(i).map(|left| {
                 // The check pass's first round: its second (as long) follows, counted in.
                 if i.doing == Doing::Step(Step::Check) && i.round == 1 {
                     left * 2 + i.step_started.elapsed()
