@@ -1079,6 +1079,7 @@ fn hints(app: &mut App, ui: &mut egui::Ui) {
     let Some(p) = &mut app.project else { return };
     let Some(q) = p.quality.clone() else { return };
     let mut jump = None;
+    let mut dust_on = false;
     let warn = |ui: &mut egui::Ui, text: String| {
         ui.label(RichText::new(format!("⚠  {text}")).color(theme::WARN));
     };
@@ -1135,8 +1136,20 @@ fn hints(app: &mut App, ui: &mut egui::Ui) {
             }
             warn(ui, text);
         }
+        // Sensor dust found while its removal is off: said here already, where the analysis is
+        // read, not only once the preview shows it.
+        let dust = p.dust_known.filter(|n| *n > 0 && !p.finish.dust);
+        if let Some(n) = dust {
+            ui.horizontal_wrapped(|ui| {
+                warn(ui, crate::text::counted(t.dust_seen, n));
+                if ui.small_button(t.dust_turn_on).clicked() {
+                    p.finish.dust = true;
+                    dust_on = true;
+                }
+            });
+        }
         if q.outliers.is_empty() && q.clipped.is_empty() && q.missing.is_empty() {
-            if no_exif || shapes.is_some() || skipped {
+            if no_exif || shapes.is_some() || skipped || dust.is_some() {
                 return;
             }
             ui.label(RichText::new(format!("✓  {}", t.no_hints)).color(theme::GOOD));
@@ -1179,6 +1192,9 @@ fn hints(app: &mut App, ui: &mut egui::Ui) {
     });
     if let Some(f) = jump {
         p.cursor = f;
+    }
+    if dust_on {
+        app.save_project_settings();
     }
 }
 

@@ -73,7 +73,8 @@ if [ -n "${NOTARY_KEY_ID:-}" ]; then
   spctl --assess --type open --context context:primary-signature -v "$DMG"
   spctl --assess --type execute -v "$APP"
 fi
-shasum -a 256 "$DMG" | tee "$DMG.sha256"
+# Named without its folder, so `shasum -c` works beside the download.
+(cd "$(dirname "$DMG")" && shasum -a 256 "$(basename "$DMG")") | tee "$DMG.sha256"
 echo "built: $APP, $DMG"
 # Signed for distribution but not notarized: Gatekeeper refuses it on other Macs.
 if [ "$SIGN_ID" != "-" ] && [ -z "${NOTARY_KEY_ID:-}" ]; then

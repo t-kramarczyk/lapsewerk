@@ -1509,7 +1509,7 @@ impl ColourClip {
         let dark = parts.iter().any(|p| p.1.contains(" at zero"));
         (!parts.is_empty()).then(|| {
             format!(
-                "colour clip:   in {} frame(s) a colour stops at its limit over more than {:.0} % of the picture (a channel at zero: {:.0} %), roughly: {}; counted in the delivered frames' tinted shades (a channel at zero only in dark ones), so a scope may find a stretch reaching further where frames hover near the limit; a saturated colour (mostly a sky) loses its shading there: lower the saturation of the keyframes around them{}, or deliver HDR (--hdr pq) to grade it",
+                "colour clip:   in {} frame(s) a colour stops at its limit over more than {:.0} % of the picture (a channel at zero: {:.0} %), roughly: {}; counted in the delivered frames at their size, white and black left out (a channel at zero only in a visible dark shade, not in a bright colour), so a scope counting every pixel at a channel's limit finds longer stretches; a saturated colour (mostly a sky) loses its shading there: lower the saturation of the keyframes around them{}, or deliver HDR (--hdr pq) to grade it",
                 spanned.len(),
                 CLIP_SHARE * 100.0,
                 ZERO_SHARE * 100.0,

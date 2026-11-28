@@ -3645,7 +3645,9 @@ impl App {
                 p.analysis = Some(Arc::from(a));
                 p.flicker_estimate = None;
                 p.stale = false;
-                if p.step == 5 {
+                // At step 2 the corrections too while dust has not been looked for: they look
+                // for it, so "Hints" can say it there (kept on disk, step 5 reuses them).
+                if p.step == 5 || (p.step == 2 && p.dust_known.is_none() && !p.finish.dust) {
                     self.start_correct();
                 }
             }

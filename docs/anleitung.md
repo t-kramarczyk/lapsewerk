@@ -97,6 +97,8 @@ Auf der **Startseite** wählst du den Ordner mit der Fotoserie (oder ziehst ihn 
    etwas senken); das Log (`colour clip:`) und `INFO.txt` (`colour`) nennen Abschnitt, Farbe und Anteil. Ebenso
    gemeldet wird ein Farbkanal, der in großen, dunklen, gefärbten Schatten auf 0 fällt (über 15 % des Bildes, z. B. ein
    Wald unter Natriumlicht: „blue at zero“); dort helfen hellere Tiefen oder Schwarzwerte im Keyframe.
+   Gezählt wird in den gelieferten Bildern in ihrer Größe, ohne Weiß und Schwarz; ein Scope, das jedes Pixel an der
+   Kanalgrenze zählt, zeigt deshalb oft längere Abschnitte.
 
 **Kamera einmessen** (Startseite, einmal je Kamera): Wähle einen oder mehrere Ordner mit vielen deiner RAW-Fotos,
 möglichst verschiedene Motive und Farben, mit eingebettetem Kamera-JPEG (Sony, Nikon und Fujifilm speichern es immer

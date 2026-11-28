@@ -3076,7 +3076,7 @@ dependencies = [
 
 [[package]]
 name = "lapsewerk-app"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "chrono",
  "eframe",
@@ -3093,7 +3093,7 @@ dependencies = [
 
 [[package]]
 name = "lapsewerk-cli"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "ctrlc",
  "lapsewerk-core",
@@ -3104,11 +3104,11 @@ dependencies = [
 
 [[package]]
 name = "lapsewerk-core"
-version = "0.3.0"
+version = "0.3.1"
 
 [[package]]
 name = "lapsewerk-develop"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "lapsewerk-core",
  "lightcraft-codecs",
@@ -3123,7 +3123,7 @@ dependencies = [
 
 [[package]]
 name = "lapsewerk-studio"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "chrono",
  "lapsewerk-core",
@@ -3134,7 +3134,7 @@ dependencies = [
 
 [[package]]
 name = "lapsewerk-video"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "chrono",
  "flate2",

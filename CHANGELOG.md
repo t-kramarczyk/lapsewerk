@@ -1,5 +1,12 @@
 # Änderungen
 
+## 0.3.1 (28.11.2026)
+
+- Sensorstaub wird schon in Schritt 2 unter „Hinweise“ gemeldet (mit „Einschalten“), nicht erst in der Vorschau.
+- Die Log-Zeile zu Farben an der Grenze sagt genau, was gezählt wird (gelieferte Bilder in ihrer Größe, ohne Weiß und
+  Schwarz) und warum ein Scope längere Abschnitte zeigen kann.
+- Neue Bildschirmfotos in README und Anleitung (Stand 0.3).
+
 ## 0.3.0 (28.11.2026)
 
 **Für Umsteiger von 0.2:** Bestehende Projekte bleiben ohne Nachschärfen und behalten ihren Tag ↔ Nacht-Wert; neue
