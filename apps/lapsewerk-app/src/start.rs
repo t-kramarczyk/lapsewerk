@@ -161,6 +161,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         new_project(app, ui);
                         ui.add_space(12.0);
                         calibrate(app, ui);
+                        lens_database(app, ui);
                         if !app.queue.jobs.is_empty() {
                             ui.add_space(12.0);
                             crate::pages::queue_card(app, ui);
@@ -198,6 +199,85 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
             }
         });
     });
+}
+
+/// The lens database (lensfun): offered once with what it is and where it comes from, downloaded
+/// only on the click; its progress while it comes; later a quiet way to fetch it after "not now".
+fn lens_database(app: &mut App, ui: &mut egui::Ui) {
+    use lapsewerk_develop::lens_db::{Progress, Status};
+    app.lens_tick();
+    let t = app.lang.t();
+    let Status::Missing(_) = &app.lens_status else {
+        return;
+    };
+    // Not while the introduction is open (one question at a time).
+    if app.intro.is_some() {
+        return;
+    }
+    match app.lens_fetch.progress() {
+        Progress::Running { bytes, total } => {
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::ProgressBar::new(if total > 0 {
+                        bytes as f32 / total as f32
+                    } else {
+                        0.0
+                    })
+                    .desired_width(320.0)
+                    .text(t.lens_db_loading),
+                );
+            });
+        }
+        _ if app.recent.lens_database == Some(false) => {
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if ui
+                    .add(egui::Button::new(theme::muted(t.lens_db_later)).frame(false))
+                    .on_hover_text(
+                        t.lens_db_offer
+                            .replace("{mb}", &lapsewerk_develop::lens_db::megabytes().to_string()),
+                    )
+                    .clicked()
+                {
+                    app.lens_quiet = false;
+                    app.recent.lens_database = Some(true);
+                    app.recent.save();
+                    app.start_lens_download();
+                }
+            });
+        }
+        _ => {
+            ui.add_space(12.0);
+            theme::card().show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                // Left-aligned (the start page centres its column).
+                ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                    ui.label(RichText::new(t.lens_db_title).strong());
+                    ui.add(
+                        egui::Label::new(theme::small(
+                            t.lens_db_offer
+                                .replace("{mb}", &lapsewerk_develop::lens_db::megabytes().to_string()),
+                        ))
+                        .wrap(),
+                    );
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        if ui.add(theme::primary(t.lens_db_download)).clicked() {
+                            app.lens_quiet = false;
+                            app.recent.lens_database = Some(true);
+                            app.recent.save();
+                            app.start_lens_download();
+                        }
+                        if ui.add(theme::secondary(t.lens_db_not_now)).clicked() {
+                            app.recent.lens_database = Some(false);
+                            app.recent.save();
+                        }
+                    });
+                });
+            });
+        }
+    }
 }
 
 /// Making a colour profile of one's camera: a button, or the progress while it runs.

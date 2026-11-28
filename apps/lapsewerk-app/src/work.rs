@@ -19,14 +19,38 @@ const PACE_WINDOW: Duration = Duration::from_secs(45);
 /// Time left of the current step: at the pace of the last [`PACE_WINDOW`] once that spans a few
 /// seconds and some frames, before that at the average since the step started.
 fn time_left(i: &Inner) -> Option<Duration> {
-    if let Some(&(t0, d0)) = i.recent.front() {
+    pace_left(&i.recent, i.done, i.total, i.step_started)
+}
+
+/// [`time_left`] from a step's recent progress (`recent`: when, done), its counts and when it
+/// started; shared with the queue, so both say the same.
+pub(crate) fn pace_left(
+    recent: &VecDeque<(Instant, usize)>,
+    done: usize,
+    total: usize,
+    started: Instant,
+) -> Option<Duration> {
+    if let Some(&(t0, d0)) = recent.front() {
         let span = t0.elapsed().as_secs_f64();
-        let done = i.done.saturating_sub(d0);
-        if span >= 5.0 && done >= 4 && i.done <= i.total {
-            return Duration::try_from_secs_f64(span / done as f64 * (i.total - i.done) as f64).ok();
+        let since = done.saturating_sub(d0);
+        if span >= 5.0 && since >= 4 && done <= total {
+            return Duration::try_from_secs_f64(span / since as f64 * (total - done) as f64).ok();
         }
     }
-    lapsewerk_studio::estimate(i.step_started.elapsed(), i.done, i.total)
+    lapsewerk_studio::estimate(started.elapsed(), done, total)
+}
+
+/// Adds a step's progress to its recent samples, keeping one older than [`PACE_WINDOW`] so the
+/// pace spans all of it.
+pub(crate) fn note_pace(recent: &mut VecDeque<(Instant, usize)>, now: Instant, done: usize) {
+    recent.push_back((now, done));
+    while recent.len() > 2
+        && recent
+            .get(1)
+            .is_some_and(|(t, _)| now.duration_since(*t) > PACE_WINDOW)
+    {
+        recent.pop_front();
+    }
 }
 
 /// What a task is doing, for the status bar.
@@ -143,11 +167,7 @@ impl Reporter for Shared {
                 i.step_started = now;
                 i.recent.clear();
             }
-            i.recent.push_back((now, done));
-            // Keep one sample older than the window, so the pace spans all of it.
-            while i.recent.len() > 2 && i.recent.get(1).is_some_and(|(t, _)| now.duration_since(*t) > PACE_WINDOW) {
-                i.recent.pop_front();
-            }
+            note_pace(&mut i.recent, now, done);
             i.done = done;
             i.total = total;
         });

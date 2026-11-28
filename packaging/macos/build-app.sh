@@ -3,7 +3,9 @@
 #   packaging/macos/build-app.sh                 ad-hoc signed (this Mac only)
 #   SIGN_ID="Developer ID Application: …" packaging/macos/build-app.sh
 #   … plus NOTARY_KEY_ID, NOTARY_ISSUER, NOTARY_KEY_FILE (.p8): notarized and stapled
+# Needs rsvg-convert for the icon (Homebrew: brew install librsvg).
 set -eu
+command -v rsvg-convert >/dev/null || { echo "rsvg-convert is needed for the icon (brew install librsvg)" >&2; exit 1; }
 cd "$(dirname "$0")/../.."
 VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 SIGN_ID=${SIGN_ID:--}
@@ -12,14 +14,20 @@ APP=$OUT/Lapsewerk.app
 
 # Built apart (target/bundle), without the build machine's paths inside (scripts/build-release.sh)
 # and without the helper's build path: the bundle carries it beside the programs.
-BUILD=${CARGO_TARGET_DIR:-target/bundle}
-CARGO_TARGET_DIR=$BUILD LAPSEWERK_BUNDLE=1 scripts/build-release.sh
+BUILD=${LAPSEWERK_TARGET_DIR:-target/bundle}
+LAPSEWERK_TARGET_DIR=$BUILD LAPSEWERK_BUNDLE=1 scripts/build-release.sh
 HELPER=$(ls -t "$BUILD"/release/build/lapsewerk-video-*/out/lapsewerk-encode | head -1)
 [ -f "$HELPER" ] || { echo "encoder helper not found" >&2; exit 1; }
 
 rm -rf "${APP:?}" "$OUT/icon.iconset"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$OUT/icon.iconset"
 cp "$BUILD/release/lapsewerk-app" "$BUILD/release/lapsewerk" "$HELPER" "$APP/Contents/MacOS/"
+# The programs in the bundle are this version's (a build that went elsewhere once left old ones to be copied).
+got=$("$APP/Contents/MacOS/lapsewerk" --version | awk '{print $2}')
+if [ "$got" != "$VERSION" ]; then
+  echo "error: the bundle's lapsewerk is $got, not $VERSION – not built where this script copies from" >&2
+  exit 1
+fi
 cp LICENSE NOTICE THIRD-PARTY-LICENSES.txt "$APP/Contents/Resources/"
 
 for s in 16 32 128 256 512; do
@@ -67,3 +75,7 @@ if [ -n "${NOTARY_KEY_ID:-}" ]; then
 fi
 shasum -a 256 "$DMG" | tee "$DMG.sha256"
 echo "built: $APP, $DMG"
+# Signed for distribution but not notarized: Gatekeeper refuses it on other Macs.
+if [ "$SIGN_ID" != "-" ] && [ -z "${NOTARY_KEY_ID:-}" ]; then
+  echo "note: signed but NOT notarized (no NOTARY_KEY_ID): other Macs refuse it until it is notarized" >&2
+fi

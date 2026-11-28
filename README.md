@@ -4,7 +4,7 @@ Zeitraffer-Werkstatt für macOS und Linux: Keyframes, Belichtungsrampen (Tag ↔
 Astro-Werkzeuge, mit der RAW-Entwicklung von [LightCraft](https://github.com/storytold/lightcraft), ohne Abo.
 [English](README.en.md)
 
-> Status: Vorabversion (0.1). Änderungen: [CHANGELOG.md](CHANGELOG.md).
+> Status: Vorabversion (0.3). Änderungen: [CHANGELOG.md](CHANGELOG.md).
 
 ## Warum es Lapsewerk gibt
 
@@ -51,7 +51,8 @@ alle Regler und Masken (Verlauf, Radial, Himmel, Helligkeit) in den Keyframes, �
    folgen den bearbeiteten (Auto-Übergang).
 4. **Feinschliff** – Deflicker (zwei Durchgänge, selbstprüfend), Tag ↔ Nacht, Handkurve, Stabilisieren, Astro.
 5. **Vorschau** – abspielen, vorher/nachher, Probevideo.
-6. **Export** – Video (Mac: ProRes/HEVC) oder Bildfolge (TIFF/DPX/EXR, überall), fortsetzbar, mit `INFO.txt`.
+6. **Export** – Video (Mac: ProRes/HEVC) oder Bildfolge (TIFF/DPX/EXR, überall), fortsetzbar, mit `INFO.txt`;
+   in Videogröße nachgeschärft (ohne Ringe um Sterne), mit Hinweis, wo eine Farbe am Anschlag Zeichnung verliert.
 
 Originale werden nie verändert, und in den Fotoordner wird nie exportiert.
 
@@ -93,7 +94,10 @@ Bildpflege beim Rendern (jeweils einzeln zuschaltbar):
 | `--denoise R` | zeitliches Entrauschen über R Bilder je Seite |
 | `--blend N` | Bewegungsunschärfe aus N Bildern |
 | `--stabilize` | Verwacklung ausgleichen |
-| `--keep-light F` | Tag ↔ Nacht: Anteil F des echten Lichtwechsels behalten (App: 0,15) |
+| `--sharpen F` / `--sharpen-night F` | fertiges Video nachschärfen (App: 0,3); mit `--sharpen-night` zur Nacht hin abgeschwächt (App: 0,1) |
+| `--lens-vignette` | mit Objektivprofil aus der Datenbank auch die Randabdunklung ausgleichen |
+| `--skip-first N` / `--skip-last N` | Probeaufnahmen am Anfang/Ende weglassen |
+| `--keep-light F` | Tag ↔ Nacht: Anteil F des echten Lichtwechsels behalten (App: 0,1) |
 | `--auto-brightness` | zu dunkel gezeigte Serie einmal anheben (Tag, Nacht mit dunklem Himmel) |
 | `--base-look` | Grund-Look für Serien ohne bearbeitete Keyframes |
 | `--reference X,Y,B,H` | Deflicker misst nur in diesem Bildteil (Anteile 0–1, z. B. `0,0,1,0.4` = obere 40 %): Himmel ohne Scheinwerfer, Menschen, Wasser darunter |

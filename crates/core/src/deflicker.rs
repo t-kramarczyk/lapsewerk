@@ -654,6 +654,26 @@ mod tests {
     }
 
     #[test]
+    fn a_ramp_that_levels_off_at_the_end_gives_no_last_step() {
+        // −0.02 stops a frame, levelling off over the last ten frames (a night reached), with
+        // flicker of ±0.002: the corrected end must follow, not run on down and step.
+        let n = 300;
+        let level = |i: usize| {
+            let t = i as f64;
+            if i < 290 {
+                -0.02 * t
+            } else {
+                -0.02 * 290.0 - 0.02 * (t - 290.0) * (1.0 - (t - 290.0) / 20.0)
+            }
+        };
+        let flicker = |i: usize| ((i * 7919) % 13) as f64 / 12.0 * 0.004 - 0.002;
+        let measured: Vec<Option<f64>> = (0..n).map(|i| Some(level(i) + flicker(i))).collect();
+        let corr = corrections(&measured, &DeflickerParams::default());
+        let worst_end = (n - 4..n).map(|i| corr[i].abs()).fold(0.0, f64::max);
+        assert!(worst_end < 0.02, "end corrections up to {worst_end}");
+    }
+
+    #[test]
     fn corrections_edge_cases() {
         let p = DeflickerParams::default();
         assert!(corrections(&[], &p).is_empty());

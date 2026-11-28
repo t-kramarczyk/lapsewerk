@@ -27,6 +27,8 @@ pub struct Curve<'a> {
     pub suggested_word: &'a str,
     /// The rings' entry in the legend.
     pub suggested_legend: &'a str,
+    /// The diamonds' entry in the legend (the saved keyframes).
+    pub keyframe_legend: &'a str,
 }
 
 impl Curve<'_> {
@@ -50,9 +52,22 @@ impl Curve<'_> {
         // axis title (in a narrow curve the rings explain themselves on hover).
         let rings = self.suggested.iter().any(|k| !self.keyframes.contains(k))
             && width_of(self.stops_word) + width_of(self.suggested_legend) + 60.0 < rect.width();
+        // The diamonds too (keyframes from another raw editor are there from the start, and
+        // said nowhere else in this step).
+        let diamonds = !self.keyframes.is_empty()
+            && width_of(self.stops_word)
+                + width_of(self.suggested_legend)
+                + width_of(self.keyframe_legend)
+                + 90.0
+                < rect.width();
         let legend_w: f32 = self.series.iter().map(|s| width_of(s.label) + 30.0).sum::<f32>()
             + if rings {
                 width_of(self.suggested_legend) + 30.0
+            } else {
+                0.0
+            }
+            + if diamonds {
+                width_of(self.keyframe_legend) + 30.0
             } else {
                 0.0
             };
@@ -62,8 +77,24 @@ impl Curve<'_> {
         } else {
             rect.top() + 9.0
         };
+        // The lines' entries, right to left, wrapped onto further rows when one row cannot hold
+        // them (a narrow curve: an entry cut off at the left said nothing).
+        let room = rect.width() - 28.0;
+        let mut rows = 1usize;
+        let mut used = 0.0f32;
+        let mut row_of = Vec::new();
+        for s in self.series.iter().rev() {
+            let w = width_of(s.label) + 30.0;
+            if used > 0.0 && used + w > room {
+                rows += 1;
+                used = 0.0;
+            }
+            used += w;
+            row_of.push(rows - 1);
+        }
+        let extra = if two_rows { (rows - 1) as f32 * 16.0 } else { 0.0 };
         let plot = Rect::from_min_max(
-            rect.min + Vec2::new(46.0, if two_rows { 56.0 } else { 40.0 }),
+            rect.min + Vec2::new(46.0, if two_rows { 56.0 + extra } else { 40.0 }),
             rect.max - Vec2::new(16.0, 26.0),
         );
 
@@ -192,27 +223,35 @@ impl Curve<'_> {
 
         // Legend, top right.
         let mut x = plot.right();
-        for s in self.series.iter().rev() {
+        let mut row = 0usize;
+        let mut lines_end = x;
+        for (s, r) in self.series.iter().rev().zip(&row_of) {
+            if two_rows && *r != row {
+                row = *r;
+                x = plot.right();
+            }
+            let y = legend_top + if two_rows { row as f32 * 16.0 } else { 0.0 };
             let galley = painter.layout_no_wrap(s.label.to_owned(), FontId::proportional(11.5), theme::MUTED);
             x -= galley.size().x;
-            painter.galley(Pos2::new(x, legend_top), galley, theme::MUTED);
+            painter.galley(Pos2::new(x, y), galley, theme::MUTED);
             x -= 16.0;
             painter.line_segment(
-                [
-                    Pos2::new(x, legend_top + 7.0),
-                    Pos2::new(x + 12.0, legend_top + 7.0),
-                ],
+                [Pos2::new(x, y + 7.0), Pos2::new(x + 12.0, y + 7.0)],
                 Stroke::new(2.5, s.color),
             );
             x -= 14.0;
+            if row == 0 {
+                lines_end = x;
+            }
         }
+        let x = if two_rows { x } else { lines_end };
+        // On two rows they go top right, beside the axis title (the lines' row is full).
+        let (mut x, top) = if two_rows {
+            (plot.right(), rect.top() + 9.0)
+        } else {
+            (x, legend_top)
+        };
         if rings {
-            // On two rows it goes top right, beside the axis title (the lines' row is full).
-            let (mut x, top) = if two_rows {
-                (plot.right(), rect.top() + 9.0)
-            } else {
-                (x, legend_top)
-            };
             let galley = painter.layout_no_wrap(
                 self.suggested_legend.to_owned(),
                 FontId::proportional(11.5),
@@ -225,6 +264,28 @@ impl Curve<'_> {
                 4.0,
                 Stroke::new(1.5, theme::ACCENT),
             );
+            x -= 30.0;
+        }
+        if diamonds {
+            let galley = painter.layout_no_wrap(
+                self.keyframe_legend.to_owned(),
+                FontId::proportional(11.5),
+                theme::MUTED,
+            );
+            x -= galley.size().x;
+            painter.galley(Pos2::new(x, top), galley, theme::MUTED);
+            let c = Pos2::new(x - 9.0, top + 7.0);
+            let d = 5.0;
+            painter.add(Shape::convex_polygon(
+                vec![
+                    c + Vec2::new(0.0, -d),
+                    c + Vec2::new(d, 0.0),
+                    c + Vec2::new(0.0, d),
+                    c + Vec2::new(-d, 0.0),
+                ],
+                theme::ACCENT,
+                Stroke::NONE,
+            ));
         }
 
         // Moving through the sequence.

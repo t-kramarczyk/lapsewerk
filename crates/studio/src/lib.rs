@@ -138,6 +138,11 @@ pub const SLOW_WAVE_SAID: f64 = 0.03;
 #[derive(Clone, Debug)]
 pub struct RenderArgs {
     pub out: PathBuf,
+    /// Which photos the frames are made of ([`photos_words`]; empty: not said): a resume with
+    /// other photos (test shots left out or taken back) is refused, not mixed.
+    pub photos: String,
+    /// A lens database's profile evens the vignetting too (`--lens-vignette`; in the fingerprint).
+    pub lens_vignette: bool,
     pub video: VideoSettings,
     /// No `--size`: landscape or portrait UHD, following the frames.
     pub auto_size: bool,
@@ -145,6 +150,12 @@ pub struct RenderArgs {
     pub position: (f64, f64),
     /// Stabilize by the exact (sub-pixel) shift, resampled, instead of whole pixels.
     pub subpixel: bool,
+    /// Output sharpening of the finished frame at the video's size (0: none; the app takes 0.3).
+    pub sharpen: f64,
+    /// Output sharpening at the darkest frame when it is to follow the light (`--sharpen-night`):
+    /// [`Self::sharpen`] by day, this by night, along the scene's light between. `None`: the same
+    /// throughout.
+    pub sharpen_night: Option<f64>,
     /// Write a folder of frames (`out` is the folder) instead of a movie.
     pub sequence: bool,
     /// The frames' files: 16-bit TIFF, 10-bit DPX or OpenEXR.
@@ -195,6 +206,21 @@ pub struct RenderArgs {
     pub verify: bool,
     pub jobs: usize,
     pub overwrite: bool,
+}
+
+/// The photos of a render in words, for its fingerprint: how many, the first and the last.
+#[must_use]
+pub fn photos_words(files: &[PathBuf]) -> String {
+    let name = |p: Option<&PathBuf>| {
+        p.and_then(|p| p.file_name())
+            .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
+    };
+    format!(
+        "{}, {} to {}",
+        files.len(),
+        name(files.first()),
+        name(files.last())
+    )
 }
 
 /// File types that are developed from the sensor data; the others are already developed pictures.
@@ -264,6 +290,8 @@ pub struct OpenSettings {
     pub look: Option<usize>,
     /// Find and repair hot pixels.
     pub hot_pixels: bool,
+    /// A lens database's profile corrects the vignetting too (`--lens-vignette`).
+    pub lens_vignette: bool,
 }
 
 impl Default for OpenSettings {
@@ -271,6 +299,7 @@ impl Default for OpenSettings {
         Self {
             look: Some(0),
             hot_pixels: true,
+            lens_vignette: false,
         }
     }
 }
@@ -286,6 +315,7 @@ pub fn open(
     rep: &dyn Reporter,
 ) -> Result<(Sequence, DevelopPlan), String> {
     let mut seq = Sequence::open(files).map_err(|e| e.to_string())?;
+    seq.set_lens_vignette(opts.lens_vignette);
     if !seq.skipped().is_empty() {
         let names: Vec<String> = seq
             .skipped()
@@ -324,13 +354,32 @@ pub fn open(
         rep.note(&format!(
             "look:          {}",
             match chosen {
-                OneLook::Fitted(i) => format!("the camera look of frame {} (from 1), for every frame", i + 1),
+                OneLook::Fitted(i) => format!(
+                    "the camera's colours, fitted on frame {} (from 1), for every frame (keyframes add their edits on top)",
+                    i + 1
+                ),
                 OneLook::Unfitted => "one for every frame: the raws' colour, no camera look fitted".into(),
             }
         ));
     } else {
         rep.note("look:          each frame's own");
     }
+    // How the lens is corrected (the first frame's: a series has one lens).
+    let (lens, how) = seq.lens(0);
+    let lens = if lens.is_empty() {
+        "unnamed".to_owned()
+    } else {
+        lens
+    };
+    rep.note(&format!(
+        "lens:          {lens}: {}",
+        match how {
+            Some(false) => "corrected by the file's own data (distortion as the camera records it)",
+            Some(true) if opts.lens_vignette => "corrected by the lens database's profile (distortion and vignetting)",
+            Some(true) => "corrected by the lens database's profile (distortion only; --lens-vignette evens the corners too)",
+            None => "no correction known (with the lens database, downloaded in the app, many lenses are)",
+        }
+    ));
     if opts.hot_pixels && !seq.one_size() {
         rep.note(
             "hot pixels:    not repaired: the frames are not all the same size (a crop mode or another camera)",
@@ -365,6 +414,9 @@ pub struct MeasureSettings {
     pub reference: Option<Rect>,
     /// Keep thumbs to measure camera shake.
     pub stabilize: bool,
+    /// Look for sensor dust while it is not to be removed, to say so ([`Corrected::dust_seen`]):
+    /// the app does, so a spot the user has not noticed is pointed out.
+    pub dust_hint: bool,
 }
 
 impl MeasureSettings {
@@ -386,6 +438,7 @@ impl Default for MeasureSettings {
             jobs: (cores / 2).clamp(1, 4),
             reference: None,
             stabilize: false,
+            dust_hint: false,
         }
     }
 }
@@ -762,6 +815,11 @@ impl Analysis {
             for (o, e) in o.iter_mut().zip(&extra) {
                 *o += e;
             }
+        } else {
+            // As the render does without --keep-light: the camera's smoothed course kept.
+            for (o, t) in o.iter_mut().zip(self.ramp_trend()) {
+                *o -= t;
+            }
         }
         o
     }
@@ -798,7 +856,21 @@ impl Analysis {
     /// The scene's and the video's change of light, in stops.
     #[must_use]
     pub fn light_ranges(&self) -> (f64, f64) {
-        (range(&self.scene), range(&self.video_trend))
+        let ramp = self.ramp_trend();
+        let exposed: Vec<f64> = self.video_trend.iter().zip(&ramp).map(|(v, r)| v - r).collect();
+        (range(&self.scene), range(&exposed))
+    }
+
+    /// The camera's exposure steps as undone, smoothed (stops): how the pictures followed the
+    /// light. Where they show the steps (a camera without smoothing, as in exported JPEGs), undoing
+    /// them leaves the scene's whole change; without `--keep-light` ("as bright as the camera
+    /// exposed") this is added back, so only the jumps go (a holy grail went black otherwise).
+    #[must_use]
+    pub fn ramp_trend(&self) -> Vec<f64> {
+        if self.ramp.iter().all(|r| r.abs() < 1e-9) {
+            return vec![0.0; self.ramp.len()];
+        }
+        lapsewerk_core::smooth::robust_local_linear(&self.ramp, lapsewerk_core::daynight::SCENE_SMOOTHING, 2)
     }
 
     /// Whether this is a day-to-night (or night-to-day) series, where keeping a share of the
@@ -846,6 +918,9 @@ pub struct Corrected {
     pub verified_seen: Option<Vec<Option<f64>>>,
     /// Sensor dust to remove.
     pub dust: Option<lapsewerk_core::dust::DustMap>,
+    /// Dust spots found while their removal is off ([`MeasureSettings::dust_hint`]); `Some(0)`:
+    /// looked for, none; `None`: not looked for.
+    pub dust_seen: Option<usize>,
     /// The size the frames render at (aspect ratio) and the video settings, its orientation fitted.
     pub size: (usize, usize),
     pub render: RenderArgs,
@@ -908,15 +983,15 @@ fn shape_gains(
 
 /// The look a sequence nobody edited gets (`--base-look`), on top of its keyframes: LightCraft's
 /// Auto recipe (calibrated on the Auto of common raw editors) with the shadows opened further and less contrast
-/// and vibrance, fitted to the author's film from his earlier time-lapse workflow of a Hamburg day to night (untouched Lapsewerk:
+/// and vibrance, fitted to the author's film from their earlier time-lapse workflow of a city day to night (untouched Lapsewerk:
 /// ground 1.9 stops darker; with this and the day lift 0.2). Exposure is not part of it:
-/// `--auto-brightness` sets how bright.
-pub const BASE_LOOK: [(&str, f64); 4] = [
-    ("light.contrast", 40.0),
-    ("light.highlights", -66.0),
-    ("light.shadows", 80.0),
-    ("color.vibrance", 15.0),
-];
+/// `--auto-brightness` sets how bright. No contrast and no vibrance, not the +40/+15 the fit gave:
+/// LightCraft's contrast and vibrance act on each channel, and a deep blue night sky shown brighter
+/// (day to night, lifted) lost its red channel to 0 (the city series as the app renders it, upright, frame
+/// 300: 58 % of the sky at contrast 25, 14 % at 10, 65 % at 10 with a lens profile's vignetting;
+/// none without either). Testers also found the sky more saturated than the earlier workflow
+/// (0.82 against 0.49) and the shadows darker: both go the right way without them.
+pub const BASE_LOOK: [(&str, f64); 2] = [("light.highlights", -66.0), ("light.shadows", 80.0)];
 
 /// `plan` with the base look when `on`.
 #[must_use]
@@ -1023,7 +1098,8 @@ const AUTO_MOST: f64 = 4.0;
 /// Frames `--auto-brightness` measures, spread over the sequence.
 const AUTO_SAMPLES: usize = 7;
 
-/// How far to lift a dark sequence (stops) and the median it measured, when its median frame
+/// How far to lift a dark sequence (stops), the median it measured and whether the day rule
+/// lifted it (its brightest frames a day shown too dark; else the night rule), when its median frame
 /// (rendered as the export renders it, at `base` offsets) is darker than [`AUTO_FLOOR`];
 /// `None` when it is bright enough.
 ///
@@ -1035,7 +1111,7 @@ fn auto_lift(
     base: &[f64],
     cfg: measure::PassConfig,
     rep: &dyn Reporter,
-) -> Result<Option<(f64, f64)>, String> {
+) -> Result<Option<(f64, f64, bool)>, String> {
     let n = base.len();
     if n == 0 {
         return Ok(None);
@@ -1047,28 +1123,78 @@ fn auto_lift(
         }
         let i = (k * (n - 1)) / (AUTO_SAMPLES - 1).max(1);
         let offset = base.get(i).copied().unwrap_or(0.0);
-        let stops = shown_stops(seq, plan, i, offset, cfg, rep)?;
-        seen.extend(stops);
+        if let Some(stops) = shown_stops(seq, plan, i, offset, cfg, rep)? {
+            seen.push((stops, i));
+        }
     }
     if seen.is_empty() {
         return Ok(None);
     }
-    seen.sort_by(f64::total_cmp);
-    let Some(&median) = seen.get(seen.len() / 2) else {
+    seen.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let Some(&(median, _)) = seen.get(seen.len() / 2) else {
         return Ok(None);
     };
-    let top = seen.last().copied().unwrap_or(median);
+    let (top, top_at) = seen.last().copied().unwrap_or((median, 0));
     let night = (AUTO_FLOOR - median).min(AUTO_MOST);
     // A day under-shown: its brightest frames brought to DAY_TARGET, fully once they are clearly
     // day (DAY_FROM), not at all at night's level, so a night is never made a day.
     let day_share = ((top - DAY_FADE_FROM) / (DAY_FROM - DAY_FADE_FROM)).clamp(0.0, 1.0);
-    let day = (DAY_TARGET - top).clamp(0.0, DAY_MOST) * day_share;
+    // A night the camera exposed to look like day (a lit square, a light show in haze) shows as
+    // bright as a day; its exposure says it is not one (no exposure data: taken as shown).
+    let daylight = seq
+        .frames()
+        .get(top_at)
+        .and_then(|f| f.exposure)
+        .map_or(1.0, |e| daylight_share(scene_ev(&e)));
+    let day = (DAY_TARGET - top).clamp(0.0, DAY_MOST) * day_share * daylight;
     let lift = night.max(day);
-    Ok((lift > 0.1).then_some((lift, median)))
+    Ok((lift > 0.1).then_some((lift, median, day > night)))
+}
+
+/// The light of the scene a frame was exposed for, as an exposure value at ISO 100 (EV100:
+/// sunlit 15, overcast day 12, a lit street at night 0-5): larger is brighter.
+fn scene_ev(e: &exposure::Exposure) -> f64 {
+    -e.stops(StepGrid::Exact)
+}
+
+/// Below this scene light ([`scene_ev`]) a series counts as a night (a lit city 4-5, a starry
+/// sky far below; dusk about 8).
+const NIGHT_EV: f64 = 6.0;
+
+/// Whether `seq` is a night series by its exposures (the median frame's scene light below
+/// [`NIGHT_EV`]): a starry sky has no change of light to tell it by. `false` without exposure data.
+#[must_use]
+pub fn night_series(seq: &Sequence) -> bool {
+    let mut ev: Vec<f64> = seq
+        .frames()
+        .iter()
+        .filter_map(|f| f.exposure)
+        .map(|e| scene_ev(&e))
+        .filter(|v| v.is_finite())
+        .collect();
+    if ev.is_empty() {
+        return false;
+    }
+    ev.sort_by(f64::total_cmp);
+    ev.get(ev.len() / 2).is_some_and(|m| *m < NIGHT_EV)
+}
+
+/// Below this scene light ([`scene_ev`]) a frame is not a day, however bright the camera made
+/// it: no day lift (dusk and lit nights lie below, a dull day above: a city afternoon 12.3,
+/// its dusk 7.9, its night 4-5).
+const DAYLIGHT_EV_FROM: f64 = 8.0;
+
+/// From this scene light up a frame is day and an under-shown one is lifted fully.
+const DAYLIGHT_EV: f64 = 11.0;
+
+/// How much of the day lift a frame exposed for `ev` ([`scene_ev`]) gets: none below
+/// [`DAYLIGHT_EV_FROM`], all from [`DAYLIGHT_EV`].
+fn daylight_share(ev: f64) -> f64 {
+    ((ev - DAYLIGHT_EV_FROM) / (DAYLIGHT_EV - DAYLIGHT_EV_FROM)).clamp(0.0, 1.0)
 }
 
 /// The brightness `--auto-brightness` brings a sequence's brightest frames to when they show
-/// darker (log2 of the linear mean, white = 0): the author's film from his earlier time-lapse workflow of a Hamburg day showed
+/// darker (log2 of the linear mean, white = 0): the author's film from their earlier time-lapse workflow of a city day showed
 /// -1.8 (a mean of about 129 of 255), the same frames untouched in Lapsewerk -2.7 (91).
 pub const DAY_TARGET: f64 = -1.9;
 
@@ -1149,7 +1275,7 @@ const KEEP_MOST: f64 = 3.0;
 
 /// What the day-to-night share needs on top so the finished look keeps `keep` of the scene's
 /// change, frame by frame: the tone curve's toe pushes dark frames down further than their exposure
-/// (Hamburg, 30 % of 8.9 stops: 3.9 stops darker instead of 2.7). Measured at up to
+/// (the city series, 30 % of 8.9 stops: 3.9 stops darker instead of 2.7). Measured at up to
 /// [`KEEP_SAMPLES`] frames rendered as the export renders them at `base` (the anchor too), each
 /// off target corrected by one secant step, interpolated between and held beyond. With the
 /// change meant and as measured before (stops, from the anchor to the sample furthest from it),
@@ -1325,6 +1451,18 @@ pub fn correct(
             anchor + 1
         ));
         keep_at = Some((keep, anchor));
+    } else {
+        // As bright as the camera exposed, only smoothed: the steps undone, their course kept.
+        let ramp = a.ramp_trend();
+        if range(&ramp) > 0.5 {
+            rep.note(&format!(
+                "exposure:      as the camera exposed it (no --keep-light): its steps smoothed, its {:.1} stops of following the light kept",
+                range(&ramp)
+            ));
+        }
+        for (o, t) in brighten.iter_mut().zip(&ramp) {
+            *o -= t;
+        }
     }
     // A sequence shown too dark (a night as shot, a day under-shown) lifted to a readable
     // brightness, as one point drawn by hand (so the tone curve is made up for like any drawn
@@ -1332,9 +1470,14 @@ pub fn correct(
     let mut lifted = 0.0;
     if r.auto_brightness && r.brightness.is_empty() {
         let base: Vec<f64> = offsets.iter().zip(&brighten).map(|(o, b)| o + b).collect();
-        if let Some((lift, median)) = auto_lift(seq, plan, &base, opts.pass(), rep)? {
+        if let Some((lift, median, by_day)) = auto_lift(seq, plan, &base, opts.pass(), rep)? {
+            let why = if by_day {
+                "its brightest frames are a day (by their exposure) shown darker than a day"
+            } else {
+                "a night shown darker than a night sky"
+            };
             rep.note(&format!(
-                "auto bright:   the frames' median brightness {median:+.2} stops (linear mean): lifted by {lift:+.2} stops"
+                "auto bright:   the frames' median brightness {median:+.2} stops (linear mean), {why}: lifted by {lift:+.2} stops"
             ));
             r.brightness = vec![(0, lift)];
             lifted = lift;
@@ -1633,9 +1776,39 @@ pub fn correct(
         // A slow swell or kink over 10-20 frames, which the frame-to-frame figure hardly counts
         // (a ramp's knee pumping, a moonrise pulled forward): said from 0.03 stops on.
         // Each knee of a day-to-night-to-day series can swell: every one named.
+        let mut flash_said = false;
+        let mut said_to = 0usize;
         for (at, a) in measure::slow_waves(&v.perceived, SLOW_WAVE_SAID) {
             let (from, to) = measure::wave_span(&v.perceived, at);
             let (from, to) = (from + 1, to + 1);
+            // Overlapping the stretch said before: the same place, said once.
+            if from <= said_to {
+                continue;
+            }
+            said_to = to;
+            // One frame far off its neighbours inside it (a flash, a car's lights): that frame,
+            // not a swell, and what takes it out.
+            let p = |i: usize| v.perceived.get(i).copied().flatten();
+            let alone = (from.max(2) - 1..to.min(v.perceived.len().saturating_sub(1)))
+                .filter_map(|i| Some((i, (p(i)? - (p(i - 1)? + p(i + 1)?) / 2.0).abs())))
+                .filter(|(i, d)| *d > 0.3 && !r.repair.replace.contains(i))
+                .max_by(|a, b| a.1.total_cmp(&b.1));
+            if let Some((i, d)) = alone {
+                // The flicker without it, so the figures above are not taken for the series'.
+                let without: Vec<Option<f64>> = v
+                    .perceived
+                    .iter()
+                    .enumerate()
+                    .map(|(j, x)| if j == i { None } else { *x })
+                    .collect();
+                line.push_str(&format!(
+                    "; frame {} alone is {d:.2} stops off its neighbours (a flash?), the frames around it run smoothly (flicker {:.4} without it): --replace-outliers takes it out",
+                    i + 1,
+                    jitter(&without)
+                ));
+                flash_said = true;
+                continue;
+            }
             line.push_str(&format!(
                 "; strays up to {a:.3} stops from a smooth course around frames {from}-{to} (a slow swell or kink over 10-20 frames)"
             ));
@@ -1646,7 +1819,12 @@ pub fn correct(
                 .fold(0.0f64, f64::max);
             if hand > SLOW_WAVE_SAID {
                 line.push_str(", where the hand-drawn brightness bends (as drawn)");
-            } else if let Some(k) = plan.keyframes().iter().find(|k| k.abs_diff(at) <= 10) {
+            } else if let Some(k) = plan
+                .keyframes()
+                .iter()
+                // Anywhere in the stretch said (overlapping ones are said once).
+                .find(|k| (from.saturating_sub(1)..to).contains(*k) || k.abs_diff(at) <= 10)
+            {
                 line.push_str(&format!(", near keyframe {} (its change of look?)", k + 1));
             }
         }
@@ -1668,7 +1846,21 @@ pub fn correct(
                 .take(3)
                 .all(|(i, _)| plan.keyframes().iter().any(|k| k.abs_diff(*i) <= 1));
         // A hundredth of a stop frame to frame is about what shows: say so, with what helps.
-        if whole > 0.01 && at_keyframes {
+        // Frames the analysis found odd (a flash on part of the picture, headlights) and left in:
+        // replacing them is what helps, not a longer smoothing.
+        let odd: Vec<usize> = if r.repair.replace.is_empty() {
+            quality(a, seq.frames()).outliers
+        } else {
+            Vec::new()
+        };
+        if flash_said {
+            // The flash is the flicker counted: said above with what takes it out.
+        } else if whole > 0.01 && !odd.is_empty() {
+            line.push_str(&format!(
+                "; the analysis found odd frame(s) {:?} (from 1), left in: --replace-outliers replaces them (a longer smoothing does not help there)",
+                odd.iter().map(|i| i + 1).collect::<Vec<_>>()
+            ));
+        } else if whole > 0.01 && at_keyframes {
             let ks: Vec<String> = top.iter().take(3).map(|(i, _)| (i + 1).to_string()).collect();
             line.push_str(&format!(
                 "; mostly at keyframe(s) {} (frames from 1): the keyframes' own change of look, as edited (a softer change there, or keyframes further apart, smooths it)",
@@ -1690,9 +1882,12 @@ pub fn correct(
                 "; most likely the scene itself (clouds or light moving, see the check pass): nothing to change unless the movie shows it",
             );
         } else if whole > 0.01 {
-            line.push_str(
-                "; warning: more than expected, look at the movie (a longer --deflicker smoothing, or --passes 1, may help)",
-            );
+            line.push_str(if r.passes > 1 {
+                "; warning: more than expected, look at the movie (a longer --deflicker smoothing, or --passes 1, may help)"
+            } else {
+                // Without the check pass, moving clouds or light cannot be told from flicker.
+                "; more than expected: without the check pass the cause is not known (clouds or light moving, or flicker left): look at the movie, or --passes 2 tells"
+            });
         }
         rep.note(&line);
         verified_seen = Some(v.perceived.clone());
@@ -1701,6 +1896,12 @@ pub fn correct(
     // Dust last of the measurements: looked for in frames as they will be rendered.
     let dust = if r.dust {
         dust::find(seq, plan, &offsets, r.jobs, (r.video.width, r.video.height), rep)?
+    } else {
+        None
+    };
+    // Looked for while off (the app): said, not removed; a search that fails only says nothing.
+    let dust_seen = if !r.dust && opts.dust_hint {
+        dust_count(seq, plan, &offsets, &r, rep)
     } else {
         None
     };
@@ -1714,6 +1915,7 @@ pub fn correct(
         verified,
         verified_seen,
         dust,
+        dust_seen,
         size,
         render: r,
     })
@@ -1777,9 +1979,25 @@ pub fn reuse(
         verified: None,
         verified_seen: None,
         dust,
+        dust_seen: c.dust_seen,
         size: c.size,
         render: r,
     }))
+}
+
+/// Dust spots in `seq` as rendered (for the hint while removal is off): `None` when it cannot
+/// be told (too few frames, a render failing); never an error, as it only adds a hint.
+pub fn dust_count(
+    seq: &mut Sequence,
+    plan: &DevelopPlan,
+    offsets: &[f64],
+    r: &RenderArgs,
+    rep: &dyn Reporter,
+) -> Option<usize> {
+    dust::find(seq, plan, offsets, r.jobs, (r.video.width, r.video.height), rep)
+        .ok()
+        .flatten()
+        .map(|m| m.spots.len())
 }
 
 /// Flicker (stops, frame to frame) of the series as shot and as the deflicker with `smoothing` frames
@@ -2012,6 +2230,39 @@ pub fn check_target(photos: &[PathBuf], out: &Path, sequence: bool) -> Result<()
     Ok(())
 }
 
+/// Each frame's place between the series' darkest (0) and brightest (1) light (2nd and 98th
+/// percentile), for sharpening that follows it; all 1 when the light hardly changes (under a stop).
+#[must_use]
+pub fn light_shares(scene: &[f64]) -> Vec<f64> {
+    // The darkest and brightest by the 2nd and 98th percentile: a flash or a test shot does not
+    // move the scale.
+    let mut sorted: Vec<f64> = scene.iter().copied().filter(|v| v.is_finite()).collect();
+    if sorted.is_empty() {
+        return vec![1.0; scene.len()];
+    }
+    sorted.sort_by(f64::total_cmp);
+    let at = |q: f64| {
+        sorted
+            .get(((sorted.len() - 1) as f64 * q).round() as usize)
+            .copied()
+            .unwrap_or(0.0)
+    };
+    let (lo, hi) = (at(0.02), at(0.98));
+    if hi - lo <= 1.0 || !(hi - lo).is_finite() {
+        return vec![1.0; scene.len()];
+    }
+    scene
+        .iter()
+        .map(|v| {
+            if v.is_finite() {
+                ((v - lo) / (hi - lo)).clamp(0.0, 1.0)
+            } else {
+                1.0
+            }
+        })
+        .collect()
+}
+
 /// Renders the movie with `c`'s corrections; returns its path.
 ///
 /// # Errors
@@ -2025,12 +2276,18 @@ pub fn render(
 ) -> Result<PathBuf, String> {
     let photos: Vec<PathBuf> = seq.frames().iter().map(|f| f.path.clone()).collect();
     check_target(&photos, &c.render.out, c.render.sequence)?;
+    let light = c.render.sharpen_night.map(|_| light_shares(&a.scene));
+    // Sharpened the same by day and night through a change into night: the app fades it out.
+    if c.render.sharpen > 0.0 && c.render.sharpen_night.is_none() && a.day_to_night() {
+        rep.note("note:          a series between day and night, sharpened the same throughout: --sharpen-night 0.1 weakens it towards the night, as the app does");
+    }
     let fix = export::Corrections {
         offsets: &c.offsets,
         brightening: &c.brightening,
         dust: c.dust.as_ref().filter(|m| !m.is_empty()),
         regional: c.regional.as_deref(),
         motion: a.motion.as_deref(),
+        light: light.as_deref(),
     };
     let looked = framed_plan(
         seq,
@@ -2235,13 +2492,23 @@ pub fn quality_with(a: &Analysis, frames: &[sequence::Frame], skipped: &[(usize,
         .collect();
     let clipped_most = a.as_shot.clipped.iter().flatten().fold(0.0f32, |m, c| m.max(*c));
     let times: Vec<Option<i64>> = frames.iter().map(|f| f.captured_ms).collect();
-    let interval = sequence::timing(frames).map_or(0, |t| t.interval_ms);
+    let timing = sequence::timing(frames);
+    let interval = timing.as_ref().map_or(0, |t| t.interval_ms);
+    // The pauses that set test shots apart are no missing frames: not filled (blending a test shot
+    // into the series' start), they are left out instead ([`sequence::stray_ends`]).
+    let stray = timing
+        .as_ref()
+        .map(|t| sequence::stray_ends(frames, t))
+        .unwrap_or_default();
+    let n_frames = frames.len();
+    let in_stray = |at: usize| at <= stray.lead || (stray.trail > 0 && at >= n_frames - stray.trail);
     Quality {
         outliers: lapsewerk_core::quality::outliers(&a.compensated, OUTLIER_STOPS),
         clipped,
         clipped_most,
         missing: {
             let mut m = lapsewerk_core::quality::missing_frames(&times, interval, MAX_FILL);
+            m.retain(|(at, _)| !in_stray(*at));
             for &(at, n) in skipped {
                 match m.iter_mut().find(|(f, _)| *f == at) {
                     Some(g) => g.1 = g.1.max(n),
@@ -2342,6 +2609,26 @@ fn measure_headroom(brightest: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_light_scale_ignores_a_flash() {
+        let mut scene: Vec<f64> = (0..100).map(|i| -f64::from(i) * 0.05).collect();
+        scene[50] = 10.0;
+        let w = super::light_shares(&scene);
+        assert!(w[0] > 0.95 && w[99] < 0.05, "{} {}", w[0], w[99]);
+    }
+
+    #[test]
+    fn day_lift_needs_daylight() {
+        let ev = |t: f64, n: f64, iso: f64| scene_ev(&exposure::Exposure::new(t, n, iso).unwrap());
+        // f/8, 1/250 s, ISO 100: a sunny day, lifted fully.
+        assert!((ev(1.0 / 250.0, 8.0, 100.0) - 13.97).abs() < 0.01);
+        assert!((daylight_share(ev(1.0 / 250.0, 8.0, 100.0)) - 1.0).abs() < 1e-12);
+        // f/2.8, 2 s, ISO 400: a lit square at night, as bright as the camera made it: no day lift.
+        assert!(daylight_share(ev(2.0, 2.8, 400.0)).abs() < 1e-12);
+        // Dusk at f/4, 1/15 s, ISO 400 (EV 5.9): not a day yet.
+        assert!(daylight_share(ev(1.0 / 15.0, 4.0, 400.0)) < 0.01);
+    }
+
     #[test]
     fn headroom_follows_the_brightest_look() {
         assert!(

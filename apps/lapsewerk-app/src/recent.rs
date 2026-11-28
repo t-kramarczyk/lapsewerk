@@ -30,6 +30,9 @@ pub struct Recent {
     pub lang: Option<String>,
     /// The introduction was seen (or skipped).
     pub intro_seen: bool,
+    /// The answer to the lens database offer: `Some(true)` download (again when missing),
+    /// `Some(false)` not now; `None`: not asked yet.
+    pub lens_database: Option<bool>,
     dir: Option<PathBuf>,
 }
 
@@ -87,6 +90,7 @@ impl Recent {
         };
         r.lang = v.get("lang").and_then(Value::as_str).map(str::to_owned);
         r.intro_seen = v.get("introSeen").and_then(Value::as_bool).unwrap_or(false);
+        r.lens_database = v.get("lensDatabase").and_then(Value::as_bool);
         r.entries = v
             .get("projects")
             .and_then(Value::as_array)
@@ -125,7 +129,7 @@ impl Recent {
                 })
             })
             .collect();
-        let v = json!({ "lang": self.lang, "introSeen": self.intro_seen, "projects": projects });
+        let v = json!({ "lang": self.lang, "introSeen": self.intro_seen, "lensDatabase": self.lens_database, "projects": projects });
         let Ok(text) = serde_json::to_string_pretty(&v) else {
             return;
         };

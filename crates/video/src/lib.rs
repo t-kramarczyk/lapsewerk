@@ -170,7 +170,8 @@ pub struct VideoSettings {
     pub fps_num: u32,
     pub fps_den: u32,
     pub codec: Codec,
-    /// HEVC bit rate in bits per second; `None`: about 0.2 bits a pixel. ProRes ignores it.
+    /// HEVC bit rate in bits per second; `None`: [`hevc_bits_per_pixel`] (0.3 at Full HD, 0.2 from
+    /// 4K, up to 0.45 below). ProRes ignores it.
     pub bitrate: Option<u64>,
     pub transfer: Transfer,
     /// A timecode track starting at this frame count (from 00:00:00:00, at the rate rounded to
@@ -788,7 +789,18 @@ impl Encoder {
             .args(["--fps", &format!("{}/{}", settings.fps_num, settings.fps_den)])
             .args(["--codec", settings.codec.arg()])
             .args(["--transfer", settings.transfer.arg()]);
-        if let Some(b) = settings.bitrate {
+        // HEVC without a rate asked for: the default for its size (more bits a pixel for a small
+        // movie, [`hevc_bits_per_pixel`]).
+        let bitrate = settings.bitrate.or_else(|| {
+            (settings.codec == Codec::Hevc).then(|| {
+                let fps = f64::from(settings.fps_num) / f64::from(settings.fps_den.max(1));
+                (hevc_bits_per_pixel(settings.width, settings.height)
+                    * (settings.width * settings.height) as f64
+                    * fps)
+                    .round() as u64
+            })
+        });
+        if let Some(b) = bitrate {
             cmd.args(["--bitrate", &b.to_string()]);
         }
         // HDR10: static metadata for PQ (what TVs and YouTube read to map the highlights): in the
@@ -975,14 +987,40 @@ impl Encoder {
         let mut message = String::new();
         let child = lock(&self.running.child).take();
         if let Some(mut child) = child {
-            let _ = child.kill();
+            // A helper that stopped on its own (a write fails once it has gone) is given a moment
+            // to be reaped, so that its own end is told, not the kill sent here.
+            let mut ended = None;
+            for _ in 0..50 {
+                match child.try_wait() {
+                    Ok(Some(s)) => {
+                        ended = Some(s);
+                        break;
+                    }
+                    Ok(None) => std::thread::sleep(std::time::Duration::from_millis(10)),
+                    Err(_) => break,
+                }
+            }
+            if ended.is_none() {
+                let _ = child.kill();
+            }
             if let Some(mut err) = child.stderr.take() {
                 let _ = err.read_to_string(&mut message);
             }
-            let status = child.wait();
-            message = match status {
-                Ok(s) => clean(&message, s),
-                Err(e) => e.to_string(),
+            let status = match ended {
+                Some(s) => Ok(s),
+                None => child.wait(),
+            };
+            message = match (status, ended.is_some()) {
+                (Ok(s), true) => clean(&message, s),
+                (Ok(s), false) => {
+                    let m = message.trim();
+                    if m.is_empty() {
+                        format!("stopped ({s})")
+                    } else {
+                        m.trim_start_matches("lapsewerk-encode: ").to_owned()
+                    }
+                }
+                (Err(e), _) => e.to_string(),
             };
         }
         let _ = std::fs::remove_file(&self.partial);
@@ -1005,17 +1043,56 @@ impl Drop for Encoder {
     }
 }
 
+/// What the helper said, or how it ended, for a helper that ended on its own; one killed from
+/// outside (SIGKILL: macOS ends the biggest program when memory runs out) says what helps.
 fn clean(message: &str, status: std::process::ExitStatus) -> String {
     let m = message.trim();
-    if m.is_empty() {
+    let said = if m.is_empty() {
         format!("stopped ({status})")
     } else {
         m.trim_start_matches("lapsewerk-encode: ").to_owned()
+    };
+    if killed(status) {
+        format!(
+            "{said}; the video helper was ended from outside (SIGKILL), most often by the system when memory runs out: fewer frames at a time (--render-jobs 1) or a smaller size help, and the frames rendered so far are kept with --sequence --resume"
+        )
+    } else {
+        said
     }
+}
+
+/// Whether a process was ended by SIGKILL.
+#[cfg(unix)]
+fn killed(status: std::process::ExitStatus) -> bool {
+    use std::os::unix::process::ExitStatusExt as _;
+    status.signal() == Some(9)
+}
+
+#[cfg(not(unix))]
+fn killed(_: std::process::ExitStatus) -> bool {
+    false
+}
+
+/// The bits a pixel and frame an HEVC movie gets when no rate is asked for: 0.3 at Full HD (0.2
+/// kept 9 % less of its detail, a busy day frame 21 % less), falling to 0.2 from 4K up, rising to
+/// 0.45 for a small one (a 540 × 960 movie kept 83 % of the detail a 1080 one halved shows at a
+/// flat 0.2, 89 % at 0.4, as ProRes).
+#[must_use]
+pub fn hevc_bits_per_pixel(width: usize, height: usize) -> f64 {
+    let px = width.max(1) as f64 * height.max(1) as f64;
+    (0.3 * (1920.0 * 1080.0 / px).sqrt()).clamp(0.2, 0.45)
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_small_hevc_movie_gets_more_bits_a_pixel() {
+        assert!((super::hevc_bits_per_pixel(1920, 1080) - 0.3).abs() < 1e-9);
+        assert!((super::hevc_bits_per_pixel(3840, 2160) - 0.2).abs() < 1e-9);
+        assert!((super::hevc_bits_per_pixel(540, 960) - 0.45).abs() < 1e-9);
+        assert!((super::hevc_bits_per_pixel(240, 160) - 0.45).abs() < 1e-9);
+    }
+
     use super::*;
 
     #[test]

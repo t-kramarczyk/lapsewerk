@@ -18,7 +18,7 @@ pub fn estimate_bytes(settings: &VideoSettings, frames: Option<FrameFormat>, cou
         // Half floats, ZIP: about 60 %.
         Some(FrameFormat::Exr) => px.saturating_mul(6).saturating_mul(3) / 5,
         None => {
-            // Bits a pixel and frame: Apple's target rates for ProRes; HEVC as set or 0.2.
+            // Bits a pixel and frame: Apple's target rates for ProRes; HEVC as set or by its size (`hevc_bits_per_pixel`).
             let bits = match settings.codec {
                 Codec::ProRes422Hq => 3.6,
                 Codec::ProRes422 => 2.4,
@@ -27,7 +27,9 @@ pub fn estimate_bytes(settings: &VideoSettings, frames: Option<FrameFormat>, cou
                     let fps = f64::from(settings.fps_num) / f64::from(settings.fps_den.max(1));
                     settings
                         .bitrate
-                        .map_or(0.2, |b| b as f64 / (px.max(1) as f64 * fps.max(1.0)))
+                        .map_or(crate::hevc_bits_per_pixel(settings.width, settings.height), |b| {
+                            b as f64 / (px.max(1) as f64 * fps.max(1.0))
+                        })
                 }
             };
             (px as f64 * bits / 8.0) as u64
@@ -86,14 +88,16 @@ impl std::fmt::Display for SpaceShort {
     }
 }
 
-/// Bytes as gigabytes for people ("12.3 GB", "850 MB").
+/// Bytes as gigabytes for people ("12.3 GB", "850 MB", "40 KB": never "0 MB" for a nearly full disk).
 #[must_use]
 pub fn gigabytes(bytes: u64) -> String {
     let gb = bytes as f64 / 1e9;
     if gb >= 1.0 {
         format!("{gb:.1} GB")
-    } else {
+    } else if bytes >= 1_000_000 {
         format!("{:.0} MB", bytes as f64 / 1e6)
+    } else {
+        format!("{} KB", bytes.div_ceil(1000))
     }
 }
 
@@ -131,6 +135,7 @@ mod tests {
         assert!((b as f64 / 1e9 - 0.375).abs() < 0.01, "{b}");
         assert_eq!(gigabytes(66_400_000_000), "66.4 GB");
         assert_eq!(gigabytes(850_000_000), "850 MB");
+        assert_eq!(gigabytes(40_960), "41 KB");
     }
 
     #[test]

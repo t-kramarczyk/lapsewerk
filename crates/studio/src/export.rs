@@ -41,6 +41,9 @@ pub struct Corrections<'a> {
     pub regional: Option<&'a [Vec<f64>]>,
     /// Stabilization: how far to move the crop, per frame (thumb pixels).
     pub motion: Option<&'a [(f64, f64)]>,
+    /// Per photo, its place between the darkest and brightest light (0..1), when the sharpening
+    /// follows the light ([`crate::light_shares`]).
+    pub light: Option<&'a [f64]>,
 }
 
 /// Renders the movie. `measured_size` is a measuring render's size: its aspect ratio decides how the
@@ -62,6 +65,7 @@ pub fn render(
         dust,
         regional,
         motion,
+        light,
     } = *fix;
     let n = seq.len();
     let v = args.video;
@@ -164,7 +168,7 @@ pub fn render(
             Some(text) if text.contains("made by") => {
                 lapsewerk_video::frames::write_whole(&info, &text).map_err(|e| info_failed(&info, &e))?;
             }
-            _ => note_delivery(&path, seq, args, "")?,
+            _ => note_delivery(&path, seq, args, "", None)?,
         }
         // The sequence's own length (frames past it were just named and removed).
         let _ = there;
@@ -278,7 +282,23 @@ pub fn render(
     // and the earlier run again after it.
     if let Sink::Frames(w) = &sink {
         let earlier = lapsewerk_video::frames::runs(&args.out);
-        let made = made_by(seq, &args.out);
+        // Which lens correction made them: a delivery before and after the lens database differs in
+        // its geometry, said where the frames' runs are.
+        let (lens, how) = seq.lens(0);
+        let made = format!(
+            "{}; lens {}: {}; lens profiles: {}; base look: {}",
+            made_by(seq, &args.out),
+            if lens.is_empty() { "unnamed" } else { lens.as_str() },
+            match how {
+                Some(false) => "corrected by the file",
+                Some(true) if seq.lens_vignette() =>
+                    "corrected by the lens database (distortion and vignetting)",
+                Some(true) => "corrected by the lens database (distortion)",
+                None => "not corrected",
+            },
+            lapsewerk_develop::lens_db::words(),
+            if args.base_look { "on" } else { "off" }
+        );
         let mut i = w.next();
         while i < n {
             if keep.contains(&i) {
@@ -331,7 +351,34 @@ pub fn render(
         jobs.push(Mutex::new(job));
     }
 
-    let encoder = &mut sink;
+    let mut encoder = Out {
+        sink: &mut sink,
+        clip: ColourClip::new(hdr_peak.is_none()),
+        sharpen: args.sharpen,
+        // The sharpening along the light: per video frame (in-between frames take their photo's).
+        sharpen_by: light
+            .zip(args.sharpen_night.filter(|_| args.sharpen > 0.0))
+            .map(|(l, night)| {
+                let per = args.tween + 1;
+                (0..l.len() * per)
+                    .map(|f| {
+                        // Full through the first half of the change of light (dusk keeps its crispness;
+                        // the seams come with real night lights), weakening over the second.
+                        let w = (2.0 * l.get(f / per).copied().unwrap_or(1.0)).min(1.0);
+                        night + (args.sharpen - night) * w
+                    })
+                    .collect()
+            }),
+        // A resume counts the frames it keeps as the run that made them counted them.
+        earlier: if args.sequence {
+            ColourClip::load(&args.out)
+        } else {
+            Vec::new()
+        },
+    };
+    // The frames before the resume's start stay as they are: counted as their run counted them.
+    let before: Vec<_> = encoder.earlier.iter().copied().filter(|e| e.0 < start).collect();
+    encoder.clip.shares.extend(before);
     let window = args.jobs + 2;
     let state = Mutex::new(State {
         next: start,
@@ -552,6 +599,10 @@ pub fn render(
     for f in stage.finish() {
         encoder.push(&f.data, f.width)?;
     }
+    let clip = encoder.clip;
+    if args.sequence {
+        clip.save(&args.out);
+    }
     let astro = args.astro;
     if args.denoise.is_some() || args.blend > 1 || astro != crate::stage::AstroParams::default() {
         let what = [
@@ -619,6 +670,25 @@ pub fn render(
     }
     // Repairs can add frames (gaps filled): the movie's length is what was written.
     let written = usize::try_from(sink.frames()).unwrap_or(n);
+    let clip_line = clip.words();
+    if let Some(line) = &clip_line {
+        rep.note(line);
+    }
+    if args.sharpen_night.is_some() && args.sharpen <= 0.0 {
+        rep.note("note:          --sharpen-night only acts with --sharpen: ignored");
+    }
+    rep.note(&if args.sharpen > 0.0 {
+        format!(
+            "sharpen:       {} at the video's size{}; edges only: the noise of flat areas is left alone, and each pixel is held near its neighbours (no dark rings, at most faint seams beside very bright lights)",
+            args.sharpen,
+            args.sharpen_night.map_or(String::new(), |n| format!(
+                " by day, {n} by night, following the scene's light{}",
+                if light.is_some() { "" } else { " (not known here, so the same throughout)" }
+            ))
+        )
+    } else {
+        "sharpen:       off".to_owned()
+    });
     if !args.repair.is_empty() {
         rep.note(&format!(
             "repairs:       {} odd frame(s) replaced, {} frame(s) put into gaps",
@@ -636,7 +706,7 @@ pub fn render(
     }
     let path = sink.finish()?;
     if args.sequence {
-        note_delivery(&path, seq, args, &run_when)?;
+        note_delivery(&path, seq, args, &run_when, clip_line.as_deref())?;
     }
     if let Some(l) = light {
         rep.note(&format!(
@@ -690,12 +760,16 @@ pub fn render(
                 lapsewerk_video::Transfer::Hlg { .. } => "HLG, Rec. 2020",
             },
         };
+        // As the movie's line: kind, size, rate, count, timecode, curve.
         rep.note(&format!(
-            "delivery:      {} frames, {:.3} fps ({}/{}), timecode {}, curve {curve}; all details in {} beside them",
+            "delivery:      {} frames, {}x{}, {:.3} fps ({}/{}), {written} frame{}, timecode {}, curve {curve}; all details in {} beside them",
             args.frame_format.name(),
+            v.width,
+            v.height,
             f64::from(v.fps_num) / f64::from(v.fps_den.max(1)),
             v.fps_num,
             v.fps_den,
+            if written == 1 { "" } else { "s" },
             timecode_range(&v, written),
             lapsewerk_video::frames::INFO_FILE
         ));
@@ -755,7 +829,13 @@ fn manifest(args: &RenderArgs, plan: &DevelopPlan, offsets: &[f64], n: usize) ->
     (r.video.codec, r.video.bitrate) = (lapsewerk_video::Codec::Hevc, None);
     // The switches that lead to repairs: what they lead to is in `repair` itself.
     (r.replace_outliers, r.fill_gaps) = (false, false);
-    let mut text = format!("{r:?} frames {n}");
+    // The program and the LightCraft that made them: frames of another build develop differently
+    // (also when `.lapsewerk-settings`, which says it in words, is gone).
+    let mut text = format!(
+        "Lapsewerk {} LightCraft {} {r:?} frames {n}",
+        env!("CARGO_PKG_VERSION"),
+        env!("LAPSEWERK_LIGHTCRAFT")
+    );
     for &k in plan.keyframes() {
         text.push_str(&format!(" {k}:{:?}", plan.settings(k, 0.0)));
     }
@@ -789,7 +869,10 @@ fn settings_in_words(args: &RenderArgs, plan: &DevelopPlan, n: usize) -> String 
 /// render's fingerprint that come from the settings alone (not the frame count, repairs or
 /// keyframes, which the analysis decides or the writer compares later). Deflicker, keep light and
 /// passes are left out: they only decide the offsets, which are compared with a tolerance.
-const EARLY_SETTINGS: [&str; 11] = [
+const EARLY_SETTINGS: [&str; 15] = [
+    "program",
+    "photos",
+    "lens profiles",
     "size",
     "frame rate",
     "timecode",
@@ -797,6 +880,7 @@ const EARLY_SETTINGS: [&str; 11] = [
     "in-between frames",
     "position",
     "hold blacks",
+    "sharpen",
     "stabilize",
     "camera move",
     "dust",
@@ -821,7 +905,24 @@ pub fn early_settings_words(args: &RenderArgs) -> String {
 /// The render's settings in words but its keyframes, one `name: value` a line.
 fn args_in_words(args: &RenderArgs, n: usize) -> Vec<String> {
     let v = &args.video;
-    vec![
+    let mut words = vec![format!(
+        "program: Lapsewerk {}, LightCraft {}",
+        env!("CARGO_PKG_VERSION"),
+        env!("LAPSEWERK_LIGHTCRAFT")
+    )];
+    if !args.photos.is_empty() {
+        words.push(format!("photos: {}", args.photos));
+    }
+    words.push(format!(
+        "lens profiles: {}{}",
+        lapsewerk_develop::lens_db::words(),
+        if args.lens_vignette {
+            ", vignetting evened"
+        } else {
+            ""
+        }
+    ));
+    words.extend([
         format!("size: {}x{}", v.width, v.height),
         format!("frame rate: {}/{}", v.fps_num, v.fps_den),
         format!(
@@ -844,7 +945,7 @@ fn args_in_words(args: &RenderArgs, n: usize) -> Vec<String> {
                 .map_or_else(|| "off".to_owned(), |k| format!("{k}"))
         ),
         format!(
-            "hand-drawn brightness: {}",
+            "brightness: {}",
             if args.brightness.is_empty() {
                 "none".to_owned()
             } else {
@@ -860,6 +961,14 @@ fn args_in_words(args: &RenderArgs, n: usize) -> Vec<String> {
         format!("passes: {}", args.passes),
         format!("position: {:.3},{:.3}", args.position.0, args.position.1),
         format!("hold blacks: {}", if args.hold_blacks { "on" } else { "off" }),
+        format!(
+            "sharpen: {}",
+            match (args.sharpen > 0.0, args.sharpen_night) {
+                (true, Some(n)) => format!("{} by day, {n} by night", args.sharpen),
+                (true, None) => format!("{}", args.sharpen),
+                (false, _) => "off".to_owned(),
+            }
+        ),
         format!("stabilize: {}", if args.stabilize { "on" } else { "off" }),
         format!(
             "camera move: {}",
@@ -889,7 +998,8 @@ fn args_in_words(args: &RenderArgs, n: usize) -> Vec<String> {
             args.regional
                 .map_or_else(|| "off".to_owned(), |g| format!("{}x{}", g.cols, g.rows))
         ),
-    ]
+    ]);
+    words
 }
 
 /// Photos replaced and frames put into gaps, counted from 1 ("none" without).
@@ -926,6 +1036,7 @@ fn note_delivery(
     seq: &Sequence,
     args: &RenderArgs,
     run_when: &str,
+    clip: Option<&str>,
 ) -> Result<(), String> {
     let info = dir.join(lapsewerk_video::frames::INFO_FILE);
     let Ok(mut text) = lapsewerk_video::frames::read_text(&info) else {
@@ -1038,13 +1149,84 @@ fn note_delivery(
         ));
     }
     let when = chrono::Local::now().format("%Y-%m-%d %H:%M:%S %z");
+    // The lens correction and the base look: a delivery before and after the lens database
+    // differs in its geometry, and the base look in its tone; said in every INFO.txt.
+    let (lens, how) = seq.lens(0);
+    text.push_str(&format!(
+        "lens       {}: {} (lens profiles: {})\nbase look  {}\n",
+        if lens.is_empty() { "unnamed" } else { lens.as_str() },
+        match how {
+            Some(false) => "corrected by the file's own data",
+            Some(true) if seq.lens_vignette() => "corrected by the lens database (distortion and vignetting)",
+            Some(true) => "corrected by the lens database (distortion only)",
+            None => "not corrected",
+        },
+        lapsewerk_develop::lens_db::words(),
+        if args.base_look {
+            crate::BASE_LOOK
+                .iter()
+                .map(|(k, v)| format!("{k} {v:+}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        } else {
+            "off (the keyframes' own look)".to_owned()
+        }
+    ));
+    text.push_str(&format!(
+        "program    Lapsewerk {}, LightCraft {}\n",
+        env!("CARGO_PKG_VERSION"),
+        env!("LAPSEWERK_LIGHTCRAFT")
+    ));
+    text.push_str(&format!(
+        "sharpen    {}\n",
+        if args.sharpen > 0.0 {
+            format!(
+                "{}{} at the video's size (edges only; noise and flat areas left)",
+                args.sharpen,
+                args.sharpen_night.map_or(String::new(), |n| format!(
+                    " by day, fading to {n} by night along the scene's light"
+                ))
+            )
+        } else {
+            "off".to_owned()
+        }
+    ));
+    // Colours at their limit (a saturated sky), for the grade: counted in the frames this run
+    // made (a resume's kept frames were counted by the run that made them, in its log).
+    if let Some(c) = clip.and_then(|c| c.strip_prefix("colour clip:")) {
+        text.push_str(&format!(
+            "colour     {}{}\n",
+            c.trim_start(),
+            if mine.len() < runs.len() {
+                " (counted in the frames whose counts are kept)"
+            } else {
+                ""
+            }
+        ));
+    } else if !args.video.transfer.is_hdr() {
+        text.push_str(&format!(
+            "colour     no colour at its limit over more than {:.0} % of the picture{}\n",
+            CLIP_SHARE * 100.0,
+            if mine.len() < runs.len() {
+                " (counted in the frames whose counts are kept)"
+            } else {
+                ""
+            }
+        ));
+    }
     text.push_str(&format!(
         "repairs    {repairs}\n{keyframes}{}made by    {}{made}\nmade on    {when}\n",
         earlier.concat(),
         if earlier.is_empty() || mine.is_empty() {
             String::new()
         } else {
-            format!("frames {}: ", mine.join(", "))
+            // "frame 10" for one, "frames 4-10" for a stretch or more.
+            let word = if mine.len() == 1 && !mine.iter().any(|m| m.contains('-') || m.contains(" on")) {
+                "frame"
+            } else {
+                "frames"
+            };
+            format!("{word} {}: ", mine.join(", "))
         }
     ));
     // Whole or not at all (a full disk must not leave it empty). Not written: the short one goes
@@ -1102,6 +1284,279 @@ fn keyframes_in_words(seq: &Sequence) -> String {
         "keyframes  {} (photo, sidecar, print of its settings)\n",
         items.join(", ")
     )
+}
+
+/// A frame's share of pixels counted as a colour at its limit before the delivery says so.
+const CLIP_SHARE: f32 = 0.10;
+/// The same for a dark shade with a channel at zero (a sodium-lit wood: blue at 0 in 18 % of the
+/// picture); a little higher than for the top, as deep shadows often hold a few such pixels.
+const ZERO_SHARE: f32 = 0.15;
+/// The colour counts kept beside a frame sequence, for a resume.
+const COLOUR_FILE: &str = ".lapsewerk-colour";
+/// Frames over [`CLIP_SHARE`] this far apart or closer count as one stretch.
+const CLIP_GAP: usize = 12;
+
+/// The frames written, counted for colours at their limit: a saturated sky (a blue hour lifted
+/// by a keyframe's exposure) whose strongest channel stops at full scale while the others do not,
+/// so its shading is gone there (white highlights are not counted: those are said as burnt out).
+/// SDR only: an HDR delivery keeps the range above white.
+struct ColourClip {
+    on: bool,
+    /// Per frame written by this run: its number in the delivery from 0, then for a colour at its
+    /// top and at zero each the share of its pixels and the channel (0 red, 1 green, 2 blue) most
+    /// often so.
+    shares: Vec<(usize, [(f32, usize); 2])>,
+}
+
+impl ColourClip {
+    fn new(on: bool) -> Self {
+        Self {
+            on,
+            shares: Vec::new(),
+        }
+    }
+
+    /// The counts kept beside a frame sequence ([`COLOUR_FILE`], one frame a line), so a resume's
+    /// kept frames are counted as their run counted them; none when there is no such file.
+    fn load(dir: &std::path::Path) -> Vec<(usize, [(f32, usize); 2])> {
+        let Ok(text) = std::fs::read_to_string(dir.join(COLOUR_FILE)) else {
+            return Vec::new();
+        };
+        text.lines()
+            .filter_map(|l| {
+                let v: Vec<&str> = l.split_whitespace().collect();
+                let num = |i: usize| v.get(i).and_then(|s| s.parse::<f64>().ok());
+                let (f, a, b, c, d) = (num(0)?, num(1)?, num(2)?, num(3)?, num(4)?);
+                Some((f as usize, [(a as f32, b as usize), (c as f32, d as usize)]))
+            })
+            .collect()
+    }
+
+    /// Keeps the counts beside a frame sequence (written whole; a failure only costs a resume's
+    /// count of its kept frames).
+    fn save(&self, dir: &std::path::Path) {
+        if !self.on {
+            return;
+        }
+        let mut shares = self.shares.clone();
+        shares.sort_by_key(|s| s.0);
+        let text: String = shares
+            .iter()
+            .map(|(f, [(a, b), (c, d)])| format!("{f} {a} {b} {c} {d}\n"))
+            .collect();
+        let _ = lapsewerk_video::frames::write_whole(&dir.join(COLOUR_FILE), &text);
+    }
+
+    fn add(&mut self, frame: usize, rgb: &[u16]) {
+        let px = rgb.len() / 3;
+        if !self.on || px == 0 {
+            return;
+        }
+        // [top, zero] × [red, green, blue]
+        let mut by = [[0usize; 3]; 2];
+        for &[r, g, b] in rgb.as_chunks::<3>().0 {
+            let (hi, lo) = (r.max(g).max(b), r.min(g).min(b));
+            // A colour at its top, not white: its weaker channels still well below.
+            if hi >= 65_400 && lo < 55_000 {
+                let c = if b == hi {
+                    2
+                } else if r == hi {
+                    0
+                } else {
+                    1
+                };
+                if let Some(n) = by[0].get_mut(c) {
+                    *n += 1;
+                }
+            }
+            // A colour with a channel at zero, not black: a deep shadow tinted beyond what the
+            // file can hold (blue at 0 in a sodium-lit wood), as lost as a clipped sky.
+            // A dark, tinted shade only (counted before the delivery's curve, which lifts the dark):
+            // 800 here is a visible shade, not black; under 26000 keeps a bright saturated surface (a
+            // turquoise lake with red at 0) out, which is colour, not a lost shadow. (2000 here missed
+            // the sodium-lit wood: 11 % for 18 %.)
+            if lo == 0 && hi > 800 && hi < 26_000 {
+                let c = if b == 0 {
+                    2
+                } else if r == 0 {
+                    0
+                } else {
+                    1
+                };
+                if let Some(n) = by[1].get_mut(c) {
+                    *n += 1;
+                }
+            }
+        }
+        let side = |k: [usize; 3]| {
+            let n: usize = k.iter().sum();
+            let c = (0..3)
+                .max_by_key(|&c| k.get(c).copied().unwrap_or(0))
+                .unwrap_or(2);
+            (n as f32 / px as f32, c)
+        };
+        self.shares.push((frame, [side(by[0]), side(by[1])]));
+    }
+
+    /// The delivery's line about it, when a frame's colours reach their top or zero over more
+    /// than [`CLIP_SHARE`] of the picture: each stretch of such frames with its colour and its
+    /// worst frame (frames counted from 1 as written), so a blue sky and a red sunrise, a clipped
+    /// sky and a clipped shadow are told apart.
+    fn words(&self) -> Option<String> {
+        let mut parts: Vec<(usize, String)> = Vec::new();
+        let mut spanned = std::collections::BTreeSet::new();
+        let mut count = std::collections::BTreeSet::new();
+        for (k, at) in [(0usize, ""), (1, " at zero")] {
+            let mut over: Vec<(usize, f32, usize)> = self
+                .shares
+                .iter()
+                .filter_map(|(f, s)| s.get(k).map(|&(share, c)| (*f, share, c)))
+                .filter(|s| s.1 > if k == 0 { CLIP_SHARE } else { ZERO_SHARE })
+                .collect();
+            over.sort_by_key(|s| s.0);
+            let mut stretches: Vec<Vec<(usize, f32, usize)>> = Vec::new();
+            for s in over {
+                count.insert(s.0);
+                match stretches.last_mut() {
+                    Some(st) if st.last().is_some_and(|l| s.0 <= l.0 + CLIP_GAP + 1) => st.push(s),
+                    _ => stretches.push(vec![s]),
+                }
+            }
+            // Each stretch reaches on over neighbours just under the threshold (a tenth under it,
+            // at most CLIP_GAP frames each way), so a stretch does not break up where the share
+            // wavers about it, nor spreads over a whole film that lies just below.
+            let limit = if k == 0 { CLIP_SHARE } else { ZERO_SHARE };
+            let near: std::collections::BTreeMap<usize, (f32, usize)> = self
+                .shares
+                .iter()
+                .filter_map(|(f, s)| s.get(k).map(|&(share, c)| (*f, (share, c))))
+                .filter(|(_, (share, _))| *share > 0.9 * limit)
+                .collect();
+            for st in &mut stretches {
+                let (start, end) = (st.first().map_or(0, |s| s.0), st.last().map_or(0, |s| s.0));
+                while let Some(first) = st.first().map(|s| s.0)
+                    && first + CLIP_GAP > start
+                    && let Some(prev) = first.checked_sub(1)
+                    && let Some(&(share, c)) = near.get(&prev)
+                {
+                    st.insert(0, (prev, share, c));
+                    count.insert(prev);
+                }
+                while let Some(last) = st.last().map(|s| s.0)
+                    && last < end + CLIP_GAP
+                    && let Some(&(share, c)) = near.get(&(last + 1))
+                {
+                    st.push((last + 1, share, c));
+                    count.insert(last + 1);
+                }
+            }
+            // Stretches reaching into each other, or as close as frames within one, are one (each
+            // frame once).
+            let mut merged: Vec<Vec<(usize, f32, usize)>> = Vec::new();
+            for st in stretches {
+                match merged.last_mut() {
+                    Some(m)
+                        if m.last()
+                            .is_some_and(|l| st.first().is_some_and(|f| f.0 <= l.0 + CLIP_GAP + 1)) =>
+                    {
+                        for s in st {
+                            if m.last().is_none_or(|l| s.0 > l.0) {
+                                m.push(s);
+                            }
+                        }
+                    }
+                    _ => merged.push(st),
+                }
+            }
+            for st in &merged {
+                let (Some(first), Some(last)) = (st.first(), st.last()) else {
+                    continue;
+                };
+                // The frames the line names: each stretch whole (a frame just under the threshold
+                // inside one counts with it).
+                spanned.extend(first.0..=last.0);
+                let worst = st
+                    .iter()
+                    .copied()
+                    .fold((0, 0.0f32, 2), |m, s| if s.1 > m.1 { s } else { m });
+                let mut by = [0usize; 3];
+                for s in st {
+                    if let Some(n) = by.get_mut(s.2) {
+                        *n += 1;
+                    }
+                }
+                let colour = match (0..3).max_by_key(|&c| by.get(c).copied().unwrap_or(0)) {
+                    Some(0) => "red",
+                    Some(1) => "green",
+                    _ => "blue",
+                };
+                let span = if first.0 == last.0 {
+                    format!("frame {}", first.0 + 1)
+                } else {
+                    format!("frames {}–{}", first.0 + 1, last.0 + 1)
+                };
+                parts.push((
+                    first.0,
+                    format!(
+                        "{span} ({colour}{at}, up to {:.0} % in frame {})",
+                        worst.1 * 100.0,
+                        worst.0 + 1
+                    ),
+                ));
+            }
+        }
+        parts.sort_by_key(|p| p.0);
+        let dark = parts.iter().any(|p| p.1.contains(" at zero"));
+        (!parts.is_empty()).then(|| {
+            format!(
+                "colour clip:   in {} frame(s) a colour stops at its limit over more than {:.0} % of the picture (a channel at zero: {:.0} %), roughly: {}; counted in the delivered frames' tinted shades (a channel at zero only in dark ones), so a scope may find a stretch reaching further where frames hover near the limit; a saturated colour (mostly a sky) loses its shading there: lower the saturation of the keyframes around them{}, or deliver HDR (--hdr pq) to grade it",
+                spanned.len(),
+                CLIP_SHARE * 100.0,
+                ZERO_SHARE * 100.0,
+                parts.into_iter().map(|p| p.1).collect::<Vec<_>>().join(", "),
+                if dark { " (for a colour at zero: lift their shadows or blacks)" } else { "" }
+            )
+        })
+    }
+}
+
+/// The sink as the render loop writes to it, with the frames counted for [`ColourClip`].
+struct Out<'a> {
+    sink: &'a mut Sink,
+    clip: ColourClip,
+    /// Output sharpening ([`lapsewerk_core::sharpen`]), 0: none.
+    sharpen: f64,
+    /// Per video frame instead, when it follows the light (`--sharpen-night`).
+    sharpen_by: Option<Vec<f64>>,
+    /// The colour counts an earlier run kept beside the frames ([`ColourClip::load`]).
+    earlier: Vec<(usize, [(f32, usize); 2])>,
+}
+
+impl Out<'_> {
+    fn keep(&mut self) -> Result<(), String> {
+        let frame = usize::try_from(self.sink.frames()).unwrap_or(usize::MAX);
+        if let Some(e) = self.earlier.iter().find(|e| e.0 == frame) {
+            self.clip.shares.push(*e);
+        }
+        self.sink.keep()
+    }
+
+    fn push(&mut self, rgb: &[u16], width: usize) -> Result<(), String> {
+        let frame = usize::try_from(self.sink.frames()).unwrap_or(usize::MAX);
+        let amount = self
+            .sharpen_by
+            .as_ref()
+            .and_then(|v| v.get(frame).or_else(|| v.last()).copied())
+            .unwrap_or(self.sharpen);
+        if amount > 0.0 {
+            let mut sharp = rgb.to_vec();
+            lapsewerk_core::sharpen::unsharp(&mut sharp, width, amount);
+            self.clip.add(frame, &sharp);
+            return self.sink.push(&sharp, width);
+        }
+        self.clip.add(frame, rgb);
+        self.sink.push(rgb, width)
+    }
 }
 
 /// Where the frames go: a movie, or a folder of TIFF frames.
@@ -1560,6 +2015,49 @@ fn project_render(folder: &str) -> String {
 mod tests {
     use super::*;
     use crate::stage::RepairParams;
+
+    #[test]
+    fn a_saturated_sky_at_its_limit_is_said_with_its_frames() {
+        let blue = [20_000u16, 40_000, 65_535];
+        let red = [65_535u16, 30_000, 20_000];
+        let grey = [30_000u16, 30_000, 30_000];
+        let white = [65_535u16; 3];
+        let frame = |sky: usize, of: [u16; 3]| -> Vec<u16> {
+            (0..100).flat_map(|i| if i < sky { of } else { grey }).collect()
+        };
+        let mut c = ColourClip::new(true);
+        c.add(0, &frame(5, blue));
+        c.add(1, &frame(30, blue));
+        c.add(2, &frame(60, white));
+        c.add(3, &frame(15, blue));
+        c.add(40, &frame(20, red));
+        let line = c.words().unwrap_or_default();
+        assert!(
+            line.contains("in 4 frame(s)")
+                && line.contains("frames 2–4 (blue, up to 30 % in frame 2)")
+                && line.contains("frame 41 (red, up to 20 % in frame 41)"),
+            "{line}"
+        );
+        // Two stretches that reach into each other over frames just under the threshold: one.
+        let mut near = ColourClip::new(true);
+        for f in 0..40 {
+            near.add(f, &frame(if f == 5 || f == 30 { 20 } else { 10 }, blue));
+        }
+        let n = near.words().unwrap_or_default();
+        assert_eq!(n.matches("(blue,").count(), 1, "{n}");
+        let mut dark = ColourClip::new(true);
+        dark.add(0, &frame(30, [9_000u16, 6_000, 0]));
+        dark.add(1, &frame(15, [9_000u16, 6_000, 0]));
+        let d = dark.words().unwrap_or_default();
+        assert!(
+            d.contains("frames 1–2 (blue at zero, up to 30 % in frame 1)")
+                && d.contains("lift their shadows"),
+            "{d}"
+        );
+        let mut hdr = ColourClip::new(false);
+        hdr.add(0, &frame(90, blue));
+        assert!(hdr.words().is_none());
+    }
 
     #[test]
     fn repairs_are_said_in_words() {

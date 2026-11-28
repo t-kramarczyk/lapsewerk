@@ -3076,7 +3076,7 @@ dependencies = [
 
 [[package]]
 name = "lapsewerk-app"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "eframe",
@@ -3093,7 +3093,7 @@ dependencies = [
 
 [[package]]
 name = "lapsewerk-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ctrlc",
  "lapsewerk-core",
@@ -3104,11 +3104,11 @@ dependencies = [
 
 [[package]]
 name = "lapsewerk-core"
-version = "0.2.0"
+version = "0.3.0"
 
 [[package]]
 name = "lapsewerk-develop"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "lapsewerk-core",
  "lightcraft-codecs",
@@ -3123,7 +3123,7 @@ dependencies = [
 
 [[package]]
 name = "lapsewerk-studio"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "lapsewerk-core",
@@ -3134,7 +3134,7 @@ dependencies = [
 
 [[package]]
 name = "lapsewerk-video"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "flate2",
@@ -3207,7 +3207,7 @@ dependencies = [
 [[package]]
 name = "lightcraft-catalog"
 version = "0.21.1"
-source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=f1854ba96d1f521c9ab41efc8a8b7c0764ea0386#f1854ba96d1f521c9ab41efc8a8b7c0764ea0386"
+source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=61bce641da7d97570c70b41014359c22d657f684#61bce641da7d97570c70b41014359c22d657f684"
 dependencies = [
  "chrono",
  "crc32fast",
@@ -3225,7 +3225,7 @@ dependencies = [
 [[package]]
 name = "lightcraft-codecs"
 version = "0.21.1"
-source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=f1854ba96d1f521c9ab41efc8a8b7c0764ea0386#f1854ba96d1f521c9ab41efc8a8b7c0764ea0386"
+source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=61bce641da7d97570c70b41014359c22d657f684#61bce641da7d97570c70b41014359c22d657f684"
 dependencies = [
  "bytemuck",
  "craft-cms",
@@ -3251,7 +3251,7 @@ dependencies = [
 [[package]]
 name = "lightcraft-color"
 version = "0.21.1"
-source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=f1854ba96d1f521c9ab41efc8a8b7c0764ea0386#f1854ba96d1f521c9ab41efc8a8b7c0764ea0386"
+source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=61bce641da7d97570c70b41014359c22d657f684#61bce641da7d97570c70b41014359c22d657f684"
 dependencies = [
  "craft-color-transform",
  "lightcraft-geom",
@@ -3261,7 +3261,7 @@ dependencies = [
 [[package]]
 name = "lightcraft-denoise-core"
 version = "0.21.1"
-source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=f1854ba96d1f521c9ab41efc8a8b7c0764ea0386#f1854ba96d1f521c9ab41efc8a8b7c0764ea0386"
+source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=61bce641da7d97570c70b41014359c22d657f684#61bce641da7d97570c70b41014359c22d657f684"
 dependencies = [
  "lightcraft-raster",
  "miniz_oxide 0.9.1",
@@ -3276,7 +3276,7 @@ dependencies = [
 [[package]]
 name = "lightcraft-develop"
 version = "0.21.1"
-source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=f1854ba96d1f521c9ab41efc8a8b7c0764ea0386#f1854ba96d1f521c9ab41efc8a8b7c0764ea0386"
+source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=61bce641da7d97570c70b41014359c22d657f684#61bce641da7d97570c70b41014359c22d657f684"
 dependencies = [
  "craft-mime",
  "lightcraft-color",
@@ -3289,7 +3289,7 @@ dependencies = [
 [[package]]
 name = "lightcraft-engine"
 version = "0.21.1"
-source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=f1854ba96d1f521c9ab41efc8a8b7c0764ea0386#f1854ba96d1f521c9ab41efc8a8b7c0764ea0386"
+source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=61bce641da7d97570c70b41014359c22d657f684#61bce641da7d97570c70b41014359c22d657f684"
 dependencies = [
  "ab_glyph",
  "chrono",
@@ -3334,7 +3334,7 @@ dependencies = [
 [[package]]
 name = "lightcraft-faces"
 version = "0.21.1"
-source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=f1854ba96d1f521c9ab41efc8a8b7c0764ea0386#f1854ba96d1f521c9ab41efc8a8b7c0764ea0386"
+source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=61bce641da7d97570c70b41014359c22d657f684#61bce641da7d97570c70b41014359c22d657f684"
 dependencies = [
  "matrixmultiply",
  "ndarray",
@@ -3348,7 +3348,7 @@ dependencies = [
 [[package]]
 name = "lightcraft-fetch"
 version = "0.21.1"
-source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=f1854ba96d1f521c9ab41efc8a8b7c0764ea0386#f1854ba96d1f521c9ab41efc8a8b7c0764ea0386"
+source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=61bce641da7d97570c70b41014359c22d657f684#61bce641da7d97570c70b41014359c22d657f684"
 dependencies = [
  "craft-http-url",
  "log",
@@ -3361,7 +3361,7 @@ dependencies = [
 [[package]]
 name = "lightcraft-geocode"
 version = "0.21.1"
-source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=f1854ba96d1f521c9ab41efc8a8b7c0764ea0386#f1854ba96d1f521c9ab41efc8a8b7c0764ea0386"
+source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=61bce641da7d97570c70b41014359c22d657f684#61bce641da7d97570c70b41014359c22d657f684"
 dependencies = [
  "craft-zip",
  "serde",
@@ -3370,7 +3370,7 @@ dependencies = [
 [[package]]
 name = "lightcraft-geom"
 version = "0.21.1"
-source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=f1854ba96d1f521c9ab41efc8a8b7c0764ea0386#f1854ba96d1f521c9ab41efc8a8b7c0764ea0386"
+source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=61bce641da7d97570c70b41014359c22d657f684#61bce641da7d97570c70b41014359c22d657f684"
 dependencies = [
  "serde",
 ]
@@ -3378,7 +3378,7 @@ dependencies = [
 [[package]]
 name = "lightcraft-gpu"
 version = "0.21.1"
-source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=f1854ba96d1f521c9ab41efc8a8b7c0764ea0386#f1854ba96d1f521c9ab41efc8a8b7c0764ea0386"
+source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=61bce641da7d97570c70b41014359c22d657f684#61bce641da7d97570c70b41014359c22d657f684"
 dependencies = [
  "bytemuck",
  "lightcraft-color",
@@ -3395,7 +3395,7 @@ dependencies = [
 [[package]]
 name = "lightcraft-inpaint"
 version = "0.21.1"
-source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=f1854ba96d1f521c9ab41efc8a8b7c0764ea0386#f1854ba96d1f521c9ab41efc8a8b7c0764ea0386"
+source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=61bce641da7d97570c70b41014359c22d657f684#61bce641da7d97570c70b41014359c22d657f684"
 dependencies = [
  "rayon",
 ]
@@ -3403,7 +3403,7 @@ dependencies = [
 [[package]]
 name = "lightcraft-lensdb"
 version = "0.21.1"
-source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=f1854ba96d1f521c9ab41efc8a8b7c0764ea0386#f1854ba96d1f521c9ab41efc8a8b7c0764ea0386"
+source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=61bce641da7d97570c70b41014359c22d657f684#61bce641da7d97570c70b41014359c22d657f684"
 dependencies = [
  "craft-xml",
  "lightcraft-develop",
@@ -3413,7 +3413,7 @@ dependencies = [
 [[package]]
 name = "lightcraft-merge"
 version = "0.21.1"
-source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=f1854ba96d1f521c9ab41efc8a8b7c0764ea0386#f1854ba96d1f521c9ab41efc8a8b7c0764ea0386"
+source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=61bce641da7d97570c70b41014359c22d657f684#61bce641da7d97570c70b41014359c22d657f684"
 dependencies = [
  "lightcraft-codecs",
  "lightcraft-color",
@@ -3430,7 +3430,7 @@ dependencies = [
 [[package]]
 name = "lightcraft-meta"
 version = "0.21.1"
-source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=f1854ba96d1f521c9ab41efc8a8b7c0764ea0386#f1854ba96d1f521c9ab41efc8a8b7c0764ea0386"
+source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=61bce641da7d97570c70b41014359c22d657f684#61bce641da7d97570c70b41014359c22d657f684"
 dependencies = [
  "chrono",
  "craft-heif",
@@ -3445,7 +3445,7 @@ dependencies = [
 [[package]]
 name = "lightcraft-pipeline"
 version = "0.21.1"
-source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=f1854ba96d1f521c9ab41efc8a8b7c0764ea0386#f1854ba96d1f521c9ab41efc8a8b7c0764ea0386"
+source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=61bce641da7d97570c70b41014359c22d657f684#61bce641da7d97570c70b41014359c22d657f684"
 dependencies = [
  "craft-cms",
  "craft-develop",
@@ -3462,7 +3462,7 @@ dependencies = [
 [[package]]
 name = "lightcraft-preview"
 version = "0.21.1"
-source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=f1854ba96d1f521c9ab41efc8a8b7c0764ea0386#f1854ba96d1f521c9ab41efc8a8b7c0764ea0386"
+source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=61bce641da7d97570c70b41014359c22d657f684#61bce641da7d97570c70b41014359c22d657f684"
 dependencies = [
  "craft-image-codecs",
  "lightcraft-raster",
@@ -3473,7 +3473,7 @@ dependencies = [
 [[package]]
 name = "lightcraft-raster"
 version = "0.21.1"
-source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=f1854ba96d1f521c9ab41efc8a8b7c0764ea0386#f1854ba96d1f521c9ab41efc8a8b7c0764ea0386"
+source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=61bce641da7d97570c70b41014359c22d657f684#61bce641da7d97570c70b41014359c22d657f684"
 dependencies = [
  "lightcraft-color",
  "lightcraft-geom",
@@ -3484,7 +3484,7 @@ dependencies = [
 [[package]]
 name = "lightcraft-raw"
 version = "0.21.1"
-source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=f1854ba96d1f521c9ab41efc8a8b7c0764ea0386#f1854ba96d1f521c9ab41efc8a8b7c0764ea0386"
+source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=61bce641da7d97570c70b41014359c22d657f684#61bce641da7d97570c70b41014359c22d657f684"
 dependencies = [
  "chrono",
  "craft-image-codecs",
@@ -3503,7 +3503,7 @@ dependencies = [
 [[package]]
 name = "lightcraft-scenes"
 version = "0.21.1"
-source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=f1854ba96d1f521c9ab41efc8a8b7c0764ea0386#f1854ba96d1f521c9ab41efc8a8b7c0764ea0386"
+source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=61bce641da7d97570c70b41014359c22d657f684#61bce641da7d97570c70b41014359c22d657f684"
 dependencies = [
  "lightcraft-color",
  "lightcraft-raster",
@@ -3514,7 +3514,7 @@ dependencies = [
 [[package]]
 name = "lightcraft-slideshow"
 version = "0.21.1"
-source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=f1854ba96d1f521c9ab41efc8a8b7c0764ea0386#f1854ba96d1f521c9ab41efc8a8b7c0764ea0386"
+source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=61bce641da7d97570c70b41014359c22d657f684#61bce641da7d97570c70b41014359c22d657f684"
 dependencies = [
  "lightcraft-raster",
  "serde",
@@ -3524,7 +3524,7 @@ dependencies = [
 [[package]]
 name = "lightcraft-ui-egui"
 version = "0.21.1"
-source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=f1854ba96d1f521c9ab41efc8a8b7c0764ea0386#f1854ba96d1f521c9ab41efc8a8b7c0764ea0386"
+source = "git+https://github.com/t-kramarczyk/lightcraft-lapsewerk?rev=61bce641da7d97570c70b41014359c22d657f684#61bce641da7d97570c70b41014359c22d657f684"
 dependencies = [
  "craft-ui",
  "craft-update",

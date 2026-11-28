@@ -69,6 +69,73 @@ pub fn timing(frames: &[Frame]) -> Option<Timing> {
     })
 }
 
+/// Frames at a series' start or end set apart from the rest by a long pause: test shots taken
+/// before the series was started, or frames after it was stopped. Only offered to be left out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct StrayEnds {
+    /// Frames before the series (0: none).
+    pub lead: usize,
+    /// From the first of them to the series' first frame (ms).
+    pub lead_pause_ms: i64,
+    /// Frames after the series (0: none).
+    pub trail: usize,
+    /// From the series' last frame to the last of them (ms).
+    pub trail_pause_ms: i64,
+}
+
+/// A pause sets frames apart as strays when it is at least this many intervals…
+const STRAY_INTERVALS: i64 = 4;
+
+/// …and at least this long (ms): a card changed in a hurry is not a series stopped. (A test shot
+/// looked at on the camera and the settings changed: about a minute.)
+const STRAY_PAUSE_MS: i64 = 30_000;
+
+/// The frames at the start and end of `frames` cut off from the series by a long pause
+/// ([`STRAY_INTERVALS`], [`STRAY_PAUSE_MS`]), at most a quarter of the frames at each end; with
+/// several such pauses near an end, the one nearest the series.
+#[must_use]
+pub fn stray_ends(frames: &[Frame], timing: &Timing) -> StrayEnds {
+    let n = frames.len();
+    let most = n / 4;
+    let pause = |j: usize| -> Option<i64> {
+        let b = frames.get(j)?.captured_ms?;
+        let a = frames.get(j.checked_sub(1)?)?.captured_ms?;
+        let p = b - a;
+        (p >= STRAY_PAUSE_MS && p >= timing.interval_ms.saturating_mul(STRAY_INTERVALS)).then_some(p)
+    };
+    let mut ends = StrayEnds::default();
+    for &j in &timing.gaps_before {
+        if j > most {
+            break;
+        }
+        if pause(j).is_some() {
+            ends.lead = j;
+        }
+    }
+    for &j in timing.gaps_before.iter().rev() {
+        if n - j > most || j <= ends.lead {
+            break;
+        }
+        if pause(j).is_some() {
+            ends.trail = n - j;
+        }
+    }
+    // How long before the series the first test shot was taken (after it, the last one): what
+    // people remember, not the last pause alone.
+    let at = |i: usize| frames.get(i).and_then(|f| f.captured_ms);
+    if ends.lead > 0
+        && let (Some(a), Some(b)) = (at(0), at(ends.lead))
+    {
+        ends.lead_pause_ms = b - a;
+    }
+    if ends.trail > 0
+        && let (Some(a), Some(b)) = (at(n - ends.trail - 1), at(n - 1))
+    {
+        ends.trail_pause_ms = b - a;
+    }
+    ends
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -99,5 +166,25 @@ mod tests {
         let t = timing(&[frame(Some(0)), frame(None), frame(Some(2000)), frame(Some(4000))]).unwrap();
         assert_eq!(t.interval_ms, 2000);
         assert!(t.gaps_before.is_empty());
+    }
+
+    #[test]
+    fn test_shots_before_and_after() {
+        // Three test shots minutes apart, then 40 frames every 5 s, then one more 10 min later.
+        let mut times = vec![0, 120_000, 240_000];
+        times.extend((0..40).map(|k| 600_000 + k * 5000));
+        times.push(600_000 + 39 * 5000 + 600_000);
+        let frames: Vec<Frame> = times.iter().map(|t| frame(Some(*t))).collect();
+        let t = timing(&frames).unwrap();
+        let s = stray_ends(&frames, &t);
+        assert_eq!((s.lead, s.lead_pause_ms), (3, 600_000));
+        assert_eq!((s.trail, s.trail_pause_ms), (1, 600_000));
+        // A card changed in 25 s near the start, or a long pause in the middle: no strays.
+        let mut times: Vec<i64> = (0..5).map(|k| k * 5000).collect();
+        times.extend((0..35).map(|k| 45_000 + k * 5000));
+        times.extend((0..40).map(|k| 600_000 + k * 5000));
+        let frames: Vec<Frame> = times.iter().map(|t| frame(Some(*t))).collect();
+        let t = timing(&frames).unwrap();
+        assert_eq!(stray_ends(&frames, &t), StrayEnds::default());
     }
 }

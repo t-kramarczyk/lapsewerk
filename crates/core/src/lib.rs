@@ -24,6 +24,7 @@ pub mod keyframes;
 pub mod quality;
 pub mod regional;
 pub mod sequence;
+pub mod sharpen;
 pub mod skymask;
 pub mod smooth;
 pub mod stabilize;

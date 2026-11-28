@@ -98,7 +98,7 @@ usage:
   lapsewerk verify  <frames folder>   (every frame against its SHA256SUMS.txt; exit 1 when one differs)
   lapsewerk render  <folder> --from-project [OPTIONS]   (exactly as set in the app; options given win)
   lapsewerk render  <folder> --out FILE.mov [--size WxH] [--position X,Y] [--move-from X,Y,ZOOM] [--move-to X,Y,ZOOM] [--fps 25] [--codec prores422hq|prores422|prores4444|hevc]
-                    [--bitrate BPS] [--transfer srgb|rec709] [--hdr pq|hlg] [--hdr-peak EV] [--deflicker N] [--passes 1|2] [--verify] [--regional 6x4] [--denoise R] [--blend N] [--tween N] [--stabilize] [--dust] [--light-pollution F] [--reduce-stars F] [--star-trails N] [--sky X,Y,W,H] [--replace-outliers] [--fill-gaps] [--keep-light F] [--auto-brightness] [--base-look] [--render-jobs N] [--overwrite] [--sequence] [--frames tiff|dpx|exr] [--name NAME] [--timecode HH:MM:SS:FF] [--movie] [--resume] [--fit-orientation] [--subpixel] [--replace-frames N,N] [OPTIONS]
+                    [--bitrate BPS] [--transfer srgb|rec709] [--hdr pq|hlg] [--hdr-peak EV] [--deflicker N] [--passes 1|2] [--verify] [--regional 6x4] [--denoise R] [--blend N] [--tween N] [--stabilize] [--dust] [--light-pollution F] [--reduce-stars F] [--star-trails N] [--sky X,Y,W,H] [--replace-outliers] [--fill-gaps] [--keep-light F] [--auto-brightness] [--base-look] [--render-jobs N] [--overwrite] [--sequence] [--frames tiff|dpx|exr] [--name NAME] [--timecode HH:MM:SS:FF] [--movie] [--resume] [--fit-orientation] [--sharpen F] [--subpixel] [--replace-frames N,N] [OPTIONS]
 analyze:
   --write-keyframes    make the suggested keyframes: an XMP sidecar, to edit in LightCraft, beside
                        each suggested frame that has none (existing sidecars are never changed)
@@ -108,6 +108,11 @@ options:
   --look FRAME         develop every frame with one look: this frame's camera look, else another's, else none (default 0)
   --per-frame-look     each frame with its own look
   --keep-hot-pixels    leave hot pixels as they are (by default they are found and repaired)
+  --skip-first N       leave out the folder's first N photos (test shots before the series);
+                       frame numbers then count from the first photo kept
+  --skip-last N        leave out the folder's last N photos
+  --lens-vignette      with a lens profile from the lens database: even the corners' vignetting too
+                       (by default only the distortion is corrected)
   --reference X,Y,W,H  measure brightness for deflicker only in this part of the frame, as fractions
                        of the developed frame from the left and top: 0,0,1,0.4 is the upper 40 %
                        (the sky, without people, traffic or water moving below it)
@@ -118,7 +123,7 @@ render:
   --size WxH           video size; default 3840x2160, or 2160x3840 when the frames are upright
   --fps N              frames a second (25; 23.976, 29.97, 59.94 or 30000/1001 for NTSC rates)
   --codec C            prores422hq (default), prores422, prores4444 or hevc (movies, Mac only)
-  --bitrate BPS        HEVC bit rate (default about 0.2 bits a pixel)
+  --bitrate BPS        HEVC bit rate (default 0.3 bits a pixel at Full HD, 0.2 from 4K, up to 0.45 below)
   --transfer T         srgb, or rec709 (BT.1886, gamma 2.4: the default for ProRes and for the
                        command line's default codec); in viewers without colour management Rec. 709
                        frames look lighter, which is right on a video monitor
@@ -149,6 +154,11 @@ render:
                        quick real changes such as cloud shadows less; 0: no deflicker)
   --tween N            N frames in between every two, along the motion (optical flow): smoother
                        clouds and traffic, or a slower video (1-3; the movie gets N+1 times longer)
+  --sharpen F          sharpen the finished frames at the video's size (0 to 2; the app takes 0.3,
+                       0 or left out: none); edges only, the noise of flat areas and night skies stays
+  --sharpen-night F    with --sharpen: the strength at the darkest frame, the sharpening following the
+                       scene's light between (day into night: --sharpen 0.3 --sharpen-night 0.1, as the app;
+                       a night throughout the app leaves unsharpened)
   --subpixel           with --stabilize: shift by the exact amount (resampled) instead of whole
                        pixels: steadier, slightly softer
   --fit-orientation    with --size: turn a landscape size upright for upright frames (as the app's
@@ -175,7 +185,8 @@ render:
   --hdr-peak EV        headroom above SDR white in stops (pq: default 3, at most 5; hlg: default and
                        at most 2.3, its 1000 cd/m²)
   --keep-light F       day to night: keep this fraction (0-1) of the scene's real change of light
-                       (0: as bright throughout, 1: night as dark as it was; 0.15 is the app's)
+                       (0: as bright throughout, 1: night as dark as it was; 0.1 is the app's;
+                       left out: as bright as the camera exposed, its steps smoothed)
   --stabilize          remove camera shake (renders 4 % larger and crops against the shake)
   --dust               remove sensor dust: soft dark spots in the same place in every frame, found
                        where the scene is smooth (sky, mist, still water)
@@ -211,6 +222,10 @@ struct Args {
     write_keyframes: bool,
     /// The frames' name (`--name`), when not the folder's.
     frame_name: Option<String>,
+    /// Photos at the folder's start and end left out (`--skip-first`, `--skip-last`): test shots.
+    skip: (usize, usize),
+    /// A lens database's profile corrects the vignetting too (`--lens-vignette`).
+    lens_vignette: bool,
     render: Option<RenderArgs>,
 }
 
@@ -480,6 +495,8 @@ fn parse(args: &[String], render: bool) -> Result<Args, String> {
     let mut csv = None;
     let mut edge = 768;
     let mut look = Some(0);
+    let mut skip = (0_usize, 0_usize);
+    let mut lens_vignette = false;
     let mut hot_pixels = true;
     let mut write_keyframes = false;
     let mut reference = None;
@@ -501,6 +518,8 @@ fn parse(args: &[String], render: bool) -> Result<Args, String> {
     let mut sequence = false;
     let mut fit_orientation = false;
     let mut subpixel = false;
+    let mut sharpen = 0.0_f64;
+    let mut sharpen_night = None;
     let mut space_check = true;
     let mut hold_blacks = true;
     let mut auto_brightness = false;
@@ -551,6 +570,17 @@ fn parse(args: &[String], render: bool) -> Result<Args, String> {
                 );
             }
             "--per-frame-look" => look = None,
+            "--lens-vignette" => lens_vignette = true,
+            "--skip-first" => {
+                skip.0 = value("--skip-first")?
+                    .parse()
+                    .map_err(|_| "--skip-first expects a number of photos")?;
+            }
+            "--skip-last" => {
+                skip.1 = value("--skip-last")?
+                    .parse()
+                    .map_err(|_| "--skip-last expects a number of photos")?;
+            }
             "--keep-hot-pixels" => hot_pixels = false,
             "--reference" => {
                 let v: Vec<f32> = value("--reference")?
@@ -811,6 +841,24 @@ fn parse(args: &[String], render: bool) -> Result<Args, String> {
                 render_only(a)?;
                 subpixel = true;
             }
+            "--sharpen-night" => {
+                render_only(a)?;
+                sharpen_night = Some(
+                    value("--sharpen-night")?
+                        .parse::<f64>()
+                        .ok()
+                        .filter(|k| (0.0..=2.0).contains(k))
+                        .ok_or("--sharpen-night expects 0 to 2, such as 0")?,
+                );
+            }
+            "--sharpen" => {
+                render_only(a)?;
+                sharpen = value("--sharpen")?
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|k| (0.0..=2.0).contains(k))
+                    .ok_or("--sharpen expects 0 to 2, such as 0.3")?;
+            }
             "--fit-orientation" => {
                 render_only(a)?;
                 fit_orientation = true;
@@ -879,7 +927,7 @@ fn parse(args: &[String], render: bool) -> Result<Args, String> {
                         .parse::<f64>()
                         .ok()
                         .filter(|k| (0.0..=1.0).contains(k))
-                        .ok_or("--keep-light expects 0 to 1, such as 0.15")?,
+                        .ok_or("--keep-light expects 0 to 1, such as 0.1")?,
                 );
             }
             "--stabilize" => {
@@ -1006,6 +1054,8 @@ fn parse(args: &[String], render: bool) -> Result<Args, String> {
         }
         Some(RenderArgs {
             out,
+            photos: String::new(),
+            lens_vignette,
             auto_size: size.is_none() || fit_orientation,
             position,
             deflicker,
@@ -1071,6 +1121,8 @@ fn parse(args: &[String], render: bool) -> Result<Args, String> {
             frame_format,
             resume,
             subpixel,
+            sharpen,
+            sharpen_night,
         })
     } else {
         None
@@ -1086,6 +1138,8 @@ fn parse(args: &[String], render: bool) -> Result<Args, String> {
         reference,
         write_keyframes,
         frame_name,
+        skip,
+        lens_vignette,
         render,
     })
 }
@@ -1298,7 +1352,8 @@ fn import(args: &[String]) -> Result<(), String> {
             names.join(", ")
         );
     }
-    // An unreadable old project is replaced; only one written by a newer Lapsewerk is kept.
+    // An unreadable old project is set aside (as the app does) and a new one made; one written
+    // by a newer Lapsewerk is left as it is.
     let previous = match Project::load(&folder) {
         Ok(p) => p,
         Err(e @ lapsewerk_develop::project::ProjectError::Format { .. })
@@ -1307,7 +1362,12 @@ fn import(args: &[String]) -> Result<(), String> {
             return Err(format!("{e}: written by a newer Lapsewerk, left as it is"));
         }
         Err(e) => {
-            eprintln!("lapsewerk: replacing the old project ({e})");
+            let kept = lapsewerk_develop::project::set_aside_damaged(&folder)
+                .map_err(|io| format!("{e}; it could not be set aside ({io}), so it is left as it is"))?;
+            eprintln!(
+                "lapsewerk: the old project could not be read ({e}): kept as {}, a new one is made",
+                kept.display()
+            );
             None
         }
     };
@@ -1341,7 +1401,9 @@ fn import(args: &[String]) -> Result<(), String> {
         keys.iter().map(|k| k + 1).collect::<Vec<_>>()
     );
     if let Some(old) = previous {
-        let c = old.changes(&files);
+        let mut c = old.changes(&files);
+        let skipped = app_skipped(&old, &folder);
+        c.added.retain(|n| !skipped.contains(n));
         if !c.is_empty() {
             println!(
                 "since the last import: {} added, {} removed",
@@ -1353,6 +1415,31 @@ fn import(args: &[String]) -> Result<(), String> {
     let path = project.save(&folder).map_err(|e| e.to_string())?;
     println!("project:       {}", path.display());
     Ok(())
+}
+
+/// The folder's photos the app leaves out as test shots (its `skip`), by name: not "added since
+/// the import" (the project lists the photos the app uses).
+fn app_skipped(project: &lapsewerk_develop::project::Project, folder: &Path) -> Vec<String> {
+    let Some(skip) = project
+        .app
+        .as_ref()
+        .and_then(|a| a.get("skip"))
+        .and_then(|v| v.as_array())
+    else {
+        return Vec::new();
+    };
+    let at = |k: usize| skip.get(k).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let Ok(all) = lapsewerk_studio::frame_files(folder) else {
+        return Vec::new();
+    };
+    let n = all.files.len();
+    let (first, last) = (at(0).min(n), at(1).min(n));
+    all.files
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i < first || *i >= n - last)
+        .filter_map(|(_, p)| p.file_name().map(|f| f.to_string_lossy().into_owned()))
+        .collect()
 }
 
 /// Says when the folder's frames differ from its project (frames added or removed since the import).
@@ -1368,7 +1455,9 @@ fn check_project(folder: &Path, files: &[PathBuf]) {
     };
     match lapsewerk_develop::project::Project::load(folder) {
         Ok(Some(p)) => {
-            let c = p.changes(files);
+            let mut c = p.changes(files);
+            let skipped = app_skipped(&p, folder);
+            c.added.retain(|n| !skipped.contains(n));
             if !c.added.is_empty() {
                 eprintln!(
                     "lapsewerk: not in the project (added since the import): {}",
@@ -1402,10 +1491,78 @@ pub fn frame_files(folder: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(f.files)
 }
 
+/// `files` without the first and last photos `skip` leaves out (`--skip-first`, `--skip-last`),
+/// saying so; at least two must be left.
+fn skip_files(files: Vec<PathBuf>, skip: (usize, usize)) -> Result<Vec<PathBuf>, String> {
+    if skip == (0, 0) {
+        return Ok(files);
+    }
+    let all = files.len();
+    if skip.0 + skip.1 + 2 > all {
+        return Err(format!(
+            "--skip-first {} and --skip-last {} leave fewer than 2 of the folder's {all} photos",
+            skip.0, skip.1
+        ));
+    }
+    let mut out = Vec::new();
+    if skip.0 > 0 {
+        out.push(format!("the first {}", skip.0));
+    }
+    if skip.1 > 0 {
+        out.push(format!("the last {}", skip.1));
+    }
+    println!(
+        "photos:        {} of the folder's {all}: {} left out (--skip-first, --skip-last); frames count from the first kept",
+        all - skip.0 - skip.1,
+        out.join(" and ")
+    );
+    files
+        .get(skip.0..all - skip.1)
+        .map(<[PathBuf]>::to_vec)
+        .ok_or_else(|| "--skip-first/--skip-last: out of range".to_owned())
+}
+
+/// A pause as people say it: "40 s", "12 min", "3 h 20 min".
+fn pause_words(ms: i64) -> String {
+    let s = ms / 1000;
+    match s {
+        ..120 => format!("{s} s"),
+        120..7200 => format!("{} min", (s + 30) / 60),
+        _ => format!("{} h {} min", s / 3600, (s % 3600) / 60),
+    }
+}
+
 fn run(args: &Args) -> Result<(), String> {
     let console = Console::default();
     let started = Instant::now();
-    let files = frame_files(&args.folder)?;
+    let files = skip_files(frame_files(&args.folder)?, args.skip)?;
+    // The app leaves test shots out and this render was not told so: said, as the frames then
+    // count from another photo than the app's.
+    if args.skip == (0, 0)
+        && let Ok(Some(p)) = lapsewerk_develop::project::Project::load(&args.folder)
+        && let Some(skip) = p
+            .app
+            .as_ref()
+            .and_then(|a| a.get("skip"))
+            .and_then(|v| v.as_array())
+    {
+        let at = |k: usize| skip.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
+        if at(0) + at(1) > 0 {
+            println!(
+                "photos:        the app leaves out {} photo(s) at the start and {} at the end (test shots); this render takes all of them (--skip-first {} --skip-last {} as in the app{})",
+                at(0),
+                at(1),
+                at(0),
+                at(1),
+                // --from-project only once the app saved render settings (an export there).
+                if p.app.as_ref().is_some_and(|a| a.get("render").is_some()) {
+                    ", or --from-project"
+                } else {
+                    ""
+                }
+            );
+        }
+    }
     // Everything that can be checked without the frames is checked now, not after hours of measuring.
     // A destination outside the photo folder whose folder is not there (a delivery drive not
     // mounted): stopped, not made on the system disk in its place.
@@ -1454,7 +1611,10 @@ fn run(args: &Args) -> Result<(), String> {
                 lapsewerk_video::frames::resume_preflight(
                     &r.out,
                     r.frame_format,
-                    &lapsewerk_studio::export::early_settings_words(r),
+                    &lapsewerk_studio::export::early_settings_words(&lapsewerk_studio::RenderArgs {
+                        photos: lapsewerk_studio::photos_words(&files),
+                        ..r.clone()
+                    }),
                 )
             } else {
                 Ok(())
@@ -1487,6 +1647,7 @@ fn run(args: &Args) -> Result<(), String> {
     let open = OpenSettings {
         look: args.look,
         hot_pixels: args.hot_pixels,
+        lens_vignette: args.lens_vignette,
     };
     let (mut seq, mut plan) = lapsewerk_studio::open(&files, &open, &console)?;
     // Auto transition, as the app does it: keyframes made and never edited follow the edited ones.
@@ -1575,6 +1736,23 @@ fn run(args: &Args) -> Result<(), String> {
         } else {
             println!("out of order:  {:?}", t.out_of_order);
         }
+        let stray = sequence::stray_ends(seq.frames(), &t);
+        if stray.lead > 0 {
+            println!(
+                "tip:           frame(s) 1-{} were taken {} before the rest (test shots?): --skip-first {} leaves them out",
+                stray.lead,
+                pause_words(stray.lead_pause_ms),
+                stray.lead + args.skip.0
+            );
+        }
+        if stray.trail > 0 {
+            println!(
+                "tip:           the last {} frame(s) were taken {} after the rest: --skip-last {} leaves them out",
+                stray.trail,
+                pause_words(stray.trail_pause_ms),
+                stray.trail + args.skip.1
+            );
+        }
     } else {
         println!("frames:        {n} (no capture times)");
     }
@@ -1588,6 +1766,7 @@ fn run(args: &Args) -> Result<(), String> {
         jobs: args.jobs,
         reference: args.reference,
         stabilize: args.render.as_ref().is_some_and(|r| r.stabilize),
+        dust_hint: false,
     };
     // As measured before when the photos, keyframes and settings are unchanged (the app's analysis too).
     let measuring = std::time::Instant::now();
@@ -1625,8 +1804,12 @@ fn run(args: &Args) -> Result<(), String> {
         q.missing.iter().map(|(i, m)| (*i, *m)).collect::<Vec<_>>()
     );
     let (scene_range, video_range) = a.light_ranges();
-    // The app keeps 15 % of a large change of light by itself; say so, so both agree.
-    if a.day_to_night() && args.render.as_ref().is_none_or(|r| r.keep_light.is_none()) {
+    // The app keeps 10 % of a large change of light by itself (unless two keyframes edited by hand
+    // set the brightness already); say so, so both agree.
+    if a.day_to_night()
+        && args.render.as_ref().is_none_or(|r| r.keep_light.is_none())
+        && lapsewerk_studio::cache::edited_keyframes_in(&seq, &args.folder).len() < 2
+    {
         // Which way: the scene's light at the end against the start.
         let first = a.scene.first().copied().unwrap_or(0.0);
         let last = a.scene.last().copied().unwrap_or(0.0);
@@ -1636,7 +1819,7 @@ fn run(args: &Args) -> Result<(), String> {
             "day to night"
         };
         println!(
-            "tip:           the light changes by {scene_range:.1} stops ({way}): --keep-light 0.15 keeps 15 % of it, as the app does by default"
+            "tip:           the light changes by {scene_range:.1} stops ({way}): --keep-light 0.1 keeps 10 % of it, as the app does by default"
         );
     }
     let suggested = a.suggested_keyframes();
@@ -1648,8 +1831,43 @@ fn run(args: &Args) -> Result<(), String> {
         .filter(|s| !saved.iter().any(|k| k.abs_diff(**s) <= near && k != *s))
         .map(|k| k + 1)
         .collect();
+    // Keyframes edited elsewhere (another raw editor) are the series' look: the suggestions are
+    // only that, said so, and the scene's change of light is the light the camera saw.
+    let edited = lapsewerk_studio::cache::edited_keyframes_in(&seq, &args.folder);
+    let edit_words = if edited.len() >= 2 {
+        format!(
+            "your edited keyframes {:?} (from 1) set the look{}",
+            edited.iter().map(|f| f + 1).collect::<Vec<_>>(),
+            {
+                // Only places not keyframes already.
+                let more: Vec<usize> = to_edit
+                    .iter()
+                    .copied()
+                    .filter(|k| !saved.contains(&(k - 1)))
+                    .collect();
+                if more.is_empty() {
+                    String::new()
+                } else {
+                    format!("; more could go at {more:?} (optional)")
+                }
+            }
+        )
+    } else {
+        format!("keyframes to edit (frames from 1): {to_edit:?}")
+    };
+    // Followed only when the camera changed its exposure; the share said only with --keep-light.
+    let followed = if a.ramp.iter().chain(&a.exif_ramp).any(|r| r.abs() > 1e-9) {
+        format!(" (the camera followed it: {video_range:.1} stops are left as exposed)")
+    } else {
+        String::new()
+    };
+    let share = if args.render.as_ref().is_some_and(|r| r.keep_light.is_some()) {
+        "; the video keeps the share --keep-light sets"
+    } else {
+        ""
+    };
     println!(
-        "light:         the scene changes by {scene_range:.1} stops (as exposed, the camera's steps undone: {video_range:.1}; the video keeps the share --keep-light sets); keyframes to edit (frames from 1): {to_edit:?}"
+        "light:         the light of the scene changes by {scene_range:.1} stops{followed}{share}; {edit_words}"
     );
     if args.write_keyframes {
         let made = write_keyframes(&mut seq, &plan, &suggested)?;
@@ -1693,6 +1911,7 @@ fn run(args: &Args) -> Result<(), String> {
 
     if let Some(r) = &args.render {
         let mut r = r.clone();
+        r.photos = lapsewerk_studio::photos_words(&files);
         // The base look is for a sequence nobody edited, as in the app: an edited keyframe's look
         // is what it says.
         if r.base_look {
@@ -1885,15 +2104,32 @@ fn report(a: &Analysis, n: usize, after_gaps: &[usize]) {
             } else if a.checks.iter().all(|c| c.reported == 0.0) {
                 "seen in the pictures, no EXIF"
             } else {
-                "no raw sensor data to check them, e.g. JPEG: the EXIF steps are used"
+                "not checked: no raw sensor data (e.g. JPEG) or too few frames around each step; the EXIF steps are used"
             }
         );
     } else {
         println!(
-            "steps:         {with_sensor} checked against the sensor data, {confirmed} as EXIF says; the others changed the picture by another amount, and that measured jump is used{}",
-            match a.checks.len() - with_sensor {
-                0 => String::new(),
-                n => format!(" ({n} without sensor data use EXIF)"),
+            "steps:         {with_sensor} checked against the sensor data, whose step is used (the ramp stays smooth either way): {confirmed} matched the EXIF step, {} differed (e.g. a step the camera reported but the picture does not show){}",
+            with_sensor - confirmed,
+            {
+                // Those without sensor data: the EXIF step unless the pictures showed none.
+                let without: Vec<_> = a
+                    .checks
+                    .iter()
+                    .filter(|c| c.measured.is_none() && !seen(c))
+                    .collect();
+                let exif = without
+                    .iter()
+                    .filter(|c| (c.used - c.reported).abs() < 1e-9)
+                    .count();
+                match (without.len(), exif) {
+                    (0, _) => String::new(),
+                    (n, e) if e == n => format!(" ({n} without sensor data use EXIF)"),
+                    (n, e) => format!(
+                        " ({n} without sensor data: {e} use EXIF, {} the step the pictures show)",
+                        n - e
+                    ),
+                }
             }
         );
     }

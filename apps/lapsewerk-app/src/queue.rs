@@ -43,6 +43,8 @@ struct Shared {
     counts: (usize, usize),
     /// When the current step began (for the time left).
     since: Option<std::time::Instant>,
+    /// The step's recent progress (when, done): the time left at the recent pace, as in the app.
+    recent: std::collections::VecDeque<(std::time::Instant, usize)>,
     /// The last error line.
     error: Option<String>,
 }
@@ -131,10 +133,10 @@ impl Queue {
         let r = self.running.as_ref()?;
         let job = self.jobs.get(r.index)?;
         let s = r.shared.lock().unwrap_or_else(PoisonError::into_inner);
-        let left = s.since.filter(|_| s.fraction > 0.02).map(|t| {
-            let spent = t.elapsed().as_secs_f64();
-            std::time::Duration::from_secs_f64(spent * f64::from(1.0 - s.fraction) / f64::from(s.fraction))
-        });
+        let left = s
+            .since
+            .filter(|_| s.fraction > 0.02)
+            .and_then(|t| crate::work::pace_left(&s.recent, s.counts.0, s.counts.1, t));
         let waiting = self.jobs.iter().filter(|j| j.state == State::Waiting).count();
         Some(Progress {
             name: job.name.clone(),
@@ -550,9 +552,12 @@ fn read_progress(err: impl std::io::Read, shared: &Mutex<Shared>) {
         let Ok(line) = line else { break };
         let mut s = shared.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some((step, done, total)) = parse_progress(&line) {
-            if step != s.step || s.since.is_none() {
-                s.since = Some(std::time::Instant::now());
+            let now = std::time::Instant::now();
+            if step != s.step || s.since.is_none() || done == 0 {
+                s.since = Some(now);
+                s.recent.clear();
             }
+            crate::work::note_pace(&mut s.recent, now, done);
             s.step = step;
             s.fraction = if total > 0 {
                 done as f32 / total as f32

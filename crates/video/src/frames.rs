@@ -354,7 +354,9 @@ fn what_differs(had: &str, wanted: &str, dir: &Path) -> String {
             (Some(r), None) => format!("; there: {r}"),
             _ => String::new(),
         };
-        format!("another frame rate, timecode, look, keyframes or repairs{there}")
+        format!(
+            "another frame rate, timecode, look, keyframes, repairs or program (see `program` in its INFO.txt){there}"
+        )
     } else {
         "other corrections: deflicker, day to night or brightness".into()
     }
@@ -412,9 +414,12 @@ fn words_differ_text(had: &str, words: &str) -> Option<String> {
     let differ: Vec<String> = keys
         .into_iter()
         .filter_map(|k| {
-            // A setting an earlier version did not write down: not known to differ.
+            // A setting an earlier version did not write down: its frames' fingerprint differs all
+            // the same, so it is said as what it is rather than left to a vaguer refusal later.
             if !k.starts_with("keyframe ") && !there.contains_key(k) {
-                return None;
+                return here
+                    .get(k)
+                    .map(|b| format!("{k}: not written there (made by an earlier version), here {b}"));
             }
             let (a, b) = (there.get(k).unwrap_or(&none), here.get(k).unwrap_or(&none));
             // A keyframe's look is a fingerprint: said as what happened to it.
@@ -2058,7 +2063,14 @@ pub fn resume_preflight(dir: &Path, format: FrameFormat, early: &str) -> Result<
         Some(why) => Err(Error::Target {
             path: dir.to_path_buf(),
             reason: format!(
-                "its frames were rendered with other settings ({why}): resuming would mix two renders; overwrite instead"
+                "its frames were rendered with other settings ({why}): resuming would mix two renders; {}",
+                if why.contains("made by an earlier version") {
+                    "frames of an earlier version cannot be continued: overwrite instead"
+                } else if why.contains("program:") {
+                    "frames of another program or LightCraft cannot be continued with this one: finish them with that one, or overwrite instead"
+                } else {
+                    "resume with the settings (and program) there, or overwrite instead"
+                }
             ),
         }),
         None => Ok(()),
@@ -2232,7 +2244,14 @@ impl FrameWriter {
                 let words = manifest.split_once('\n').map_or("", |(_, w)| w);
                 let why = words_differ(dir, words).unwrap_or_else(|| what_differs(&had, &wanted, dir));
                 return Err(target(format!(
-                    "its frames were rendered with other settings ({why}): resuming would mix two renders; overwrite instead"
+                    "its frames were rendered with other settings ({why}): resuming would mix two renders; {}",
+                    if why.contains("made by an earlier version") {
+                        "frames of an earlier version cannot be continued: overwrite instead"
+                    } else if why.contains("program:") {
+                        "frames of another program or LightCraft cannot be continued with this one: finish them with that one, or overwrite instead"
+                    } else {
+                        "resume with the settings (and program) there, or overwrite instead"
+                    }
                 )));
             }
             // The last frames written before the stop may be damaged (a crash, a full disk):

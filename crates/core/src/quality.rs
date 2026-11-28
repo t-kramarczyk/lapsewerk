@@ -207,7 +207,7 @@ mod tests {
 
     #[test]
     fn the_light_turning_at_the_end_of_a_series_is_no_odd_frame() {
-        // Karer See cut after frame 11: the last frame half a stop darker, as the frame after it
+        // A lake series cut after frame 11: the last frame half a stop darker, as the frame after it
         // (left out) was too. A flash at the end (1.2 stops) still counts.
         let v: Vec<Option<f64>> = [
             -3.46, -3.41, -3.38, -3.38, -3.45, -3.51, -3.37, -3.2, -3.21, -3.17, -3.73,

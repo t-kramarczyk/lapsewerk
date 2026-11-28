@@ -54,6 +54,27 @@ pub struct Project {
     pub app: Option<Value>,
 }
 
+/// Renames a project file that cannot be read out of the way, never over an earlier damaged copy
+/// (it may hold more): `lapsewerk.json.damaged`, then `.damaged-2` … Returns where it went.
+///
+/// # Errors
+/// When it cannot be renamed.
+pub fn set_aside_damaged(folder: &Path) -> std::io::Result<PathBuf> {
+    let from = folder.join(FILE_NAME);
+    let to = (1..100)
+        .map(|k| {
+            folder.join(if k == 1 {
+                format!("{FILE_NAME}.damaged")
+            } else {
+                format!("{FILE_NAME}.damaged-{k}")
+            })
+        })
+        .find(|p| !p.exists())
+        .unwrap_or_else(|| folder.join(format!("{FILE_NAME}.damaged-last")));
+    std::fs::rename(&from, &to)?;
+    Ok(to)
+}
+
 /// Why a project could not be written or read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProjectError {
@@ -391,6 +412,26 @@ mod tests {
             frame("e.arw", None, 1.0 / 50.0),
         ];
         Project::of(&frames, &[0, 3]).unwrap()
+    }
+
+    #[test]
+    fn a_damaged_project_is_set_aside_never_over_another() {
+        let dir = std::env::temp_dir().join(format!("lapsewerk-damaged-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for (k, text) in ["{\"version\": 3, \"frames\": [", "not json"].iter().enumerate() {
+            std::fs::write(dir.join(FILE_NAME), text).unwrap();
+            let to = set_aside_damaged(&dir).unwrap();
+            let want = if k == 0 {
+                "lapsewerk.json.damaged"
+            } else {
+                "lapsewerk.json.damaged-2"
+            };
+            assert_eq!(to.file_name().unwrap(), want);
+            assert_eq!(std::fs::read_to_string(&to).unwrap(), *text);
+        }
+        assert!(!dir.join(FILE_NAME).exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

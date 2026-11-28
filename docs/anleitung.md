@@ -22,7 +22,9 @@ Auf der **Startseite** wählst du den Ordner mit der Fotoserie (oder ziehst ihn 
 öffnen sich mit einem Klick. Dann führen sechs Schritte durch das Projekt:
 
 1. **Bilder:** wie viele Bilder es sind, das Intervall und ob Bilder fehlen oder kaputt sind (sie werden weggelassen
-   und ihre Stelle später gefüllt) → *Analyse starten*.
+   und ihre Stelle später gefüllt) → *Analyse starten*. Liegen die ersten oder letzten Fotos durch eine lange Pause
+   vom Rest getrennt (Probeaufnahmen), bietet die App *Weglassen* an; *Doch verwenden* macht es rückgängig. Keine
+   Datei wird dabei verschoben oder gelöscht.
 2. **Analyse:** Flackern, Belichtungssprünge und Lichtwechsel in Worten, dazu die Helligkeitskurve. Klicken oder
    ziehen in der Kurve zeigt das Bild an dieser Stelle.
    Darunter stehen **Hinweise**: auffällige Einzelbilder (Blitz, Scheinwerfer, jemand vor der Linse) werden durch ihre
@@ -35,7 +37,9 @@ Auf der **Startseite** wählst du den Ordner mit der Fotoserie (oder ziehst ihn 
    Liste als *automatisch* und folgen den bearbeiteten (sie werden aus ihnen überblendet und gespeichert, entlang
    des Lichts der Szene: ein Keyframe in der blauen Stunde bekommt so viel vom Nacht-Look, wie das Licht dort schon
    gefallen ist, nicht so viel, wie seine Bildnummer sagt). Typisch:
-   nur den ersten (Tag) und letzten (Nacht) Keyframe einstellen, die übrigen gehen weich mit. Folgen können nur
+   nur den ersten (Tag) und letzten (Nacht) Keyframe einstellen, die übrigen gehen weich mit. Schon bearbeitete
+   Keyframes aus XMP-Dateien (LightCraft oder ein anderes Raw-Programm) übernimmt Lapsewerk von selbst; die Farben
+   bleiben dabei die der Kamera (siehe *Farben* weiter unten). Folgen können nur
    Keyframes *zwischen* bearbeiteten; einer davor oder danach behält seinen Look (wird nur die Nacht bearbeitet,
    bleibt der Tag, wie er ist). Wird ein automatischer Keyframe bearbeitet – hier, in LightCraft oder von Hand –, gilt er als bearbeitet und wird nie
    überschrieben (Sterne/Bewertungen in der XMP zählen nicht als Bearbeitung). *Wieder automatisch* macht einen
@@ -55,17 +59,23 @@ Auf der **Startseite** wählst du den Ordner mit der Fotoserie (oder ziehst ihn 
    Teile) und *Pinsel* (im Bild malen oder radieren, mit Größe und weicher Kante; jeder Strich lässt sich
    rückgängig machen). Jede Maske hat eigene Regler und lässt sich umkehren. Zwischen Keyframes blenden Masken weich über, auch
    ihre Lage; ein Keyframe ohne die Maske lässt sie aus- oder einblenden. Zugeordnet wird nach dem Namen der Maske.
-   Für alles, was die App nicht selbst kann (Kurvenpunkte, Objektivprofile), öffnet *In LightCraft öffnen*
+   Für alles, was die App nicht selbst kann (z. B. Kurvenpunkte), öffnet *In LightCraft öffnen*
    den Keyframe dort. Speichere in LightCraft die Metadaten in die Datei (oder schalte das automatische XMP-Schreiben
    ein): Lapsewerk bemerkt das und übernimmt die Änderungen von selbst. Ein anderes LightCraft-Programm wählst du mit
    der Umgebungsvariablen `LAPSEWERK_LIGHTCRAFT`. Ist eine XMP-Datei beschädigt, steht das über der Liste.
-4. **Feinschliff:** Schalter für Flackern (mit Stärke von sanft bis kräftig), Tag ↔ Nacht (bei Sonnenauf-/-untergang schon an), Verwacklung, Staub,
+4. **Feinschliff:** Schalter für Flackern (mit Stärke von sanft bis kräftig), Tag ↔ Nacht (bei Sonnenauf-/-untergang schon an – außer
+   du hast zwei oder mehr Keyframes bearbeitet, z. B. in einem anderen Raw-Programm: dann bestimmen sie die Helligkeit),
+   „Zu dunkle Serie automatisch aufhellen“, „Video nachschärfen“ (an, Stärke 0,3; Regler bis 2: Kanten klarer, Rauschen bleibt; bei Serien von Tag bis Nacht zur Nacht
+   hin auf ein Drittel abgeschwächt – Haken „Zur Nacht hin abschwächen“, bei reinen Nachtserien von selbst aus), „Randabdunklung des Objektivs ausgleichen“ (nur mit Objektivprofil; nachts
+   lieber aus; die Bildmitte kann danach etwas dunkler wirken, weil die automatische Aufhellung weniger anhebt), Verwacklung, Staub,
    Bewegung, Rauschen, Nachthimmel. Technisches steckt unter *Erweitert*. **Helligkeit von Hand formen**: in die
    Kurve klicken setzt einen Punkt (neben einer Keyframe-Raute rastet er dort ein), ziehen macht dort heller oder
    dunkler, Doppelklick entfernt ihn; die gestrichelte Linie zeigt das Bild für *+ Punkt*.
    Unter **Bildausschnitt und Kamerafahrt** wählst du, welcher Teil des Bildes ins Video kommt, und ob die Kamera
    langsam heranzoomt, wegzoomt oder schwenkt. Das kleine Bild zeigt den Ausschnitt am Anfang (weiß) und am Ende.
 5. **Vorschau:** abspielen, vorher/nachher mit Schieber, Bild für Bild (Pfeiltasten, Leertaste spielt ab).
+   Findet Lapsewerk Sensorstaub, während „Sensorstaub entfernen“ aus ist, steht darunter ein gelber Hinweis mit
+   „Einschalten“.
    **Probevideo** rechnet schnell eine kleine Fassung (960 × 540) mit allen Einstellungen, auch Staub, Rauschen,
    Sternen und Kamerafahrt, und legt sie in `Lapsewerk-Export` („… – Probe“: am Mac ein Video, sonst Bilder).
    **Ergebnis nachmessen** misst den fertigen Look einmal nach (wie `--verify`): Restflackern von Bild zu Bild
@@ -75,18 +85,34 @@ Auf der **Startseite** wählst du den Ordner mit der Fotoserie (oder ziehst ihn 
 6. **Export:** Format wählen (4K, Full HD, Hochkant; am Mac als Video, sonst als Bildfolge) → *Video erstellen* bzw.
    *Bilder erstellen*. Unter *Erweitert*: Größe bis 8K und DCI 4K, Codec (ProRes 422 / 422 HQ / 4444, HEVC),
    Bildfolge als TIFF, DPX oder OpenEXR, NTSC-Bildraten (23,976 / 29,97 / 59,94), Timecode (mit `;` als
-   Drop-Frame bei 29,97/59,94), Rec. 709, HDR als PQ (HDR10) oder HLG. Unter „Speichern als“ steht, was im Zielordner schon liegt: eine
+   Drop-Frame bei 29,97/59,94), Rec. 709, HDR als PQ (HDR10) oder HLG, bei HEVC die Qualität „Hoch“ (anderthalbfache Datenrate,
+   die gewählte Formatkarte sagt es). Unter „Speichern als“ steht, was im Zielordner schon liegt: eine
    fertige Folge mit denselben Einstellungen, ein abgebrochener Export (dann ist *Fortsetzen* der Hauptknopf und
    rechnet nur den Rest) oder Bilder mit anderen Einstellungen (sie werden ersetzt). *In die Warteschlange* rechnet
    im Hintergrund weiter, auch mehrere Projekte nacheinander. Hat sich seit der Vorschau nichts geändert, übernimmt
    der Export ihre Korrekturen und fängt gleich mit dem Rendern an. Neben einer Bildfolge liegt `INFO.txt` mit allen
    Lieferangaben, den Reparaturen und dem Befehl, der genau diese Folge noch einmal erzeugt.
+   Ist eine Farbe (meist ein satter Himmel) über mehr als 10 % des Bildes so kräftig, dass feine Abstufungen
+   verloren gehen, sagt die Fertig-Anzeige, in welchen Bildern, mit einem Knopf zu den Keyframes (dort die Sättigung
+   etwas senken); das Log (`colour clip:`) und `INFO.txt` (`colour`) nennen Abschnitt, Farbe und Anteil. Ebenso
+   gemeldet wird ein Farbkanal, der in großen, dunklen, gefärbten Schatten auf 0 fällt (über 15 % des Bildes, z. B. ein
+   Wald unter Natriumlicht: „blue at zero“); dort helfen hellere Tiefen oder Schwarzwerte im Keyframe.
 
 **Kamera einmessen** (Startseite, einmal je Kamera): Wähle einen oder mehrere Ordner mit vielen deiner RAW-Fotos,
 möglichst verschiedene Motive und Farben, mit eingebettetem Kamera-JPEG (Sony, Nikon und Fujifilm speichern es immer
 mit). Lapsewerk vergleicht die Rohdaten mit dem JPEG der Kamera und berechnet daraus ein Farbprofil für dein Modell,
 z. B. für die A6700, für die LightCraft keins mitbringt; die A7 IV hat eins, ein eigenes aus deinen Fotos ersetzt es.
 Das Profil gilt nach einem Neustart in Lapsewerk und LightCraft. Kommandozeile: `lapsewerk calibrate ORDNER …`.
+
+**Objektivprofile** (Startseite, einmal): *Herunterladen* lädt die freie Objektiv-Datenbank lensfun (etwa 5 MB,
+CC BY-SA 3.0) aus dem Internet; nur auf deinen Klick. Danach gleicht Lapsewerk die Verzeichnung der Objektive aus, die sie
+kennt, sofern die Raw-Datei keine eigene Korrektur mitbringt. Die Randabdunklung bleibt, wie fotografiert; der Haken
+„Randabdunklung des Objektivs ausgleichen“ in Schritt 4 (Kommandozeile `--lens-vignette`) gleicht sie auch aus. Auch die
+Kommandozeile nutzt die geladene Datenbank; die Zeile `lens:` im Log und „Objektiv“ in Schritt 1 sagen, was gilt. In der App gilt das für neu geöffnete Projekte, auf der Kommandozeile sofort.
+
+**Farben seit 0.2:** Lapsewerk 0.2 entwickelt mit dem neueren LightCraft (Rechenweg 10 statt 2): weniger
+Farbrauschen, etwas satter. Ein Projekt aus 0.1 sieht deshalb beim erneuten Öffnen etwas anders aus; alle Keyframes
+einer Serie rechnen mit demselben, dem neuesten Rechenweg, damit es an keinem Keyframe springt.
 
 Wo es dauert, steht unten, was gerade passiert, wie weit es ist und wie lange es noch dauert; *Abbrechen* geht immer.
 Die Einstellungen eines Projekts liegen in `lapsewerk.json` bei den Fotos.
@@ -148,18 +174,30 @@ Ein Video, das es schon gibt, wird nur mit `--overwrite` ersetzt, und erst, wenn
 **Sonnenaufgang oder -untergang (Tag ↔ Nacht).** Die Kamera hat nachgeregelt, das Video soll aber noch zeigen,
 dass es heller oder dunkler wird:
 ```sh
-lapsewerk render ORDNER --out film.mov --keep-light 0.15 --auto-brightness --base-look --verify
+lapsewerk render ORDNER --out film.mov --keep-light 0.1 --auto-brightness --base-look --verify
 ```
-`--keep-light 0.15` behält 15 % des echten Lichtwechsels (die Vorgabe der App). 0 heißt durchgehend gleich hell, 1 heißt
-die Nacht so dunkel, wie sie war. `--auto-brightness` hebt eine zu dunkel gezeigte Serie einmal für alle Bilder an (ein
-zu dunkler Tag auf Tageshelligkeit, eine Sternennacht so, dass der Himmel dunkel bleibt, etwa 30 von 255).
-`--base-look` gibt unbearbeiteten Serien einen Grund-Look: Tiefen auf, Lichter gehalten, etwas Kontrast und Dynamik.
+`--keep-light 0.1` behält 10 % des echten Lichtwechsels (die Vorgabe der App; bis Version 0.2 waren es 15 %). 0 heißt durchgehend gleich hell, 1 heißt
+die Nacht so dunkel, wie sie war; ohne den Schalter bleibt es so hell, wie die Kamera belichtet hat (nur ihre Sprünge
+geglättet). `--auto-brightness` hebt eine zu dunkel gezeigte Serie einmal für alle Bilder an (ein
+zu dunkler Tag auf Tageshelligkeit, eine Sternennacht so, dass der Himmel dunkel bleibt, etwa 30 von 255). Als Tag
+gilt dabei nur, was laut Belichtung (EXIF) bei Tageslicht entstand: eine hell belichtete, beleuchtete Nacht (Platz,
+Lichtshow im Dunst) wird nicht wie ein Tag angehoben. In der App schaltet „Zu dunkle Serie automatisch aufhellen“
+(Schritt 4) das ab.
+`--base-look` gibt unbearbeiteten Serien einen Grund-Look: Tiefen auf, Lichter gehalten.
 Beides macht die App von selbst, solange du keinen Keyframe bearbeitet hast; mit bearbeiteten Keyframes (auch aus
 einem anderen Raw-Programm) lässt die Kommandozeile den Grund-Look weg und sagt es.
 
-Umsteiger von anderen Zeitraffer-Programmen: Lapsewerk lässt die Nacht mit 15 % oft dunkler als dort üblich (Hamburg,
-Tag → Nacht: am Ende etwa 77 statt 101 von 255). Wer den helleren Verlauf möchte, nimmt weniger Licht mit
-(`--keep-light 0.08` bis `0.1`, in der App im Feinschliff „Lichtanteil Tag ↔ Nacht“).
+**Farben:** Lapsewerk entwickelt mit den Farben deiner Kamera (wie ihr JPEG), auch wenn die Keyframes aus einem
+anderen Raw-Programm kommen. Dessen Standardprofil zeigt dieselben Regler oft blasser und kühler; Belichtung,
+Lichter, Tiefen und Weißabgleich übernimmt Lapsewerk, die Grundfarbe bleibt die der Kamera. Wer es blasser möchte,
+senkt die Sättigung im Keyframe. Lokale Regler wie Klarheit, Dunst entfernen und kräftig angehobene Tiefen wirken
+in LightCraft etwas schwächer als in manchem anderen Programm: wer den Tag plastischer möchte, erhöht sie im
+Keyframe ein wenig. Kräftige Himmel (blaue Stunde, mit Belichtung angehoben) können dabei im
+Blaukanal anschlagen und Zeichnung verlieren; dagegen hilft weniger Sättigung im Keyframe, und wer im Grading
+Reserven braucht, liefert als HDR-EXR (`--frames exr --hdr pq`): dort bleibt der Verlauf über Weiß erhalten.
+
+Umsteiger von anderen Zeitraffer-Programmen: Wer die Nacht noch heller möchte, nimmt weniger Licht mit
+(`--keep-light 0.05` bis `0.08`, in der App im Feinschliff „Tag ↔ Nacht“); wer sie dunkler möchte, mehr (0,15–0,3).
 
 **Flackern nur im Himmel messen.** Wenn unten Autos, Menschen oder Wasser die Helligkeit verändern:
 ```sh
@@ -195,7 +233,7 @@ hebt den Himmel nicht an, und Flugzeuge oder Scheinwerfer, die von Bild zu Bild 
 
 **Verwackelt, z. B. bei Wind:** `--stabilize`. Das Bild wird 4 % größer gerendert und gegen das Wackeln verschoben.
 
-**Sensorstaub (dunkle Flecken im Himmel):** `--dust`.
+**Sensorstaub (dunkle Flecken im Himmel):** `--dust`. Die App sucht auch bei ausgeschaltetem Schalter einmal danach und meldet gefundene Flecken unter der Vorschau.
 
 **Blitz, Scheinwerfer, fehlende Bilder:** `--replace-outliers` ersetzt Einzelbilder, die heller oder dunkler als
 ihre Nachbarn sind, `--fill-gaps` füllt Pausen der Aufnahme (bis 12 Bilder) mit Überblendungen. `lapsewerk analyze`
@@ -242,11 +280,12 @@ Bilder neu; `--overwrite` löscht vorher die alten Bilder der Folge.
 Kopf vermerkt), `--frames exr` OpenEXR in Halbgleitkomma und linearem Licht (SDR-Weiß = 1,0; bei HDR liegen die
 Lichter darüber, Primärfarben Rec. 2020, sonst Rec. 709). Das lineare Licht der EXR ist *Display-Licht*: die
 fertig entwickelten Bilder mit ihrer Kennlinie zurückgerechnet, kein Szenenlicht wie aus einer Kamera; SDR-EXR
-reichen deshalb nur bis 1,0. Beide liest ffmpeg zurück; in der App: Export → *Erweitert* → *Dateiformat* (DPX und
+reichen deshalb nur bis 1,0 (für Reserven über Weiß, z. B. einen satten Himmel: `--hdr pq`). Beide liest ffmpeg zurück; in der App: Export → *Erweitert* → *Dateiformat* (DPX und
 EXR dort standardmäßig in Rec. 709). Neben jeder fertigen Bildfolge liegt `INFO.txt` mit Dateien, Format, Größe,
 Bildrate, Timecode von–bis, Kennlinie, Primärfarben und Wertebereich – fürs Schnitt- oder Grading-Team. Dazu
-nennt sie Reparaturen, jeden Lauf, dessen Bilder darin stecken (nach einem Fortsetzen auch den früheren), und den
-Befehl zum Nachrendern. Daneben liegt `SHA256SUMS.txt` mit der Prüfsumme jedes Bildes (beim Schreiben berechnet);
+nennt sie Reparaturen, jeden Lauf, dessen Bilder darin stecken (nach einem Fortsetzen auch den früheren), Objektiv
+und Korrektur (`lens`), den Grund-Look, die Ausgabeschärfung (`sharpen`), Farben am Anschlag (`colour`) und den
+Befehl zum Nachrendern; die Zeile `program` nennt Lapsewerk- und LightCraft-Stand. Daneben liegt `SHA256SUMS.txt` mit der Prüfsumme jedes Bildes (beim Schreiben berechnet);
 der Empfänger prüft die Lieferung mit `sha256sum -c SHA256SUMS.txt` (macOS: `shasum -a 256 -c SHA256SUMS.txt`) oder
 `lapsewerk verify ORDNER`, das jedes abweichende Bild beim Namen nennt. `verify` endet mit 0, wenn alles stimmt, und
 mit 1 bei einer Abweichung oder einer Folge, die nicht zu Ende geschrieben ist (abgebrochen, oder INFO.txt fehlt):
@@ -254,8 +293,11 @@ dann schließt `render … --resume` sie ab. In der App macht dasselbe **„Lief
 prüfen“** in Schritt 6 (auch vor einem neuen Export und bei einem abgebrochenen, dann mit den beim Schreiben
 notierten Prüfsummen). Geänderte, gekürzte oder fehlende Bilder macht **„Fortsetzen“** neu; die heilen Bilder danach
 bleiben. Ein Bild, das jemand bearbeitet hat (etwa eine Retusche), wird dabei nicht überschrieben, sondern als
-`NAME.tif.kept` beiseitegelegt: Es gehört nicht zur Lieferung, INFO.txt und `verify` nennen es („set aside“), und
+`NAME.tif.kept` beiseitegelegt: Es gehört nicht zur Lieferung, INFO.txt und `verify` nennen es („set aside“), die App sagt es gelb in Schritt 6, und
 wer die Retusche behalten will, nimmt sie von dort.
+
+**Korn beim starken Aufhellen:** Wer im Grading eine Blende und mehr aufhellt, sieht feines Korn in glatten Flächen
+(Himmel, Wasser). `--denoise 2` beim Export glättet es (nicht zusammen mit `--resume`).
 
 Die Kommandozeile endet mit **0**, wenn alles gelungen ist, mit **1** bei einem Fehler (die Meldung steht davor)
 und mit **130**, wenn sie mit Strg-C oder `kill` abgebrochen wurde; die Bilder bis dahin bleiben, `--resume`
@@ -278,7 +320,7 @@ Eine Aufhellung, die du mit der Handkurve selbst ziehst, bleibt dabei unangetast
 Exporte laufen im Hintergrund nacheinander (über das Programm `lapsewerk` neben der App), während man an diesem oder
 einem anderen Projekt weiterarbeitet; Fortschritt, Abbrechen und „Im Ordner zeigen“ stehen im Export und auf der
 Startseite. Schließt man die App, wird der laufende Export abgebrochen. Beim nächsten Start stehen die nicht fertigen
-Exporte wieder da: der abgebrochene mit *Fortsetzen* (Bildfolge) oder *Neu rechnen*, die wartenden als „vom letzten
+Exporte wieder da: der abgebrochene mit *Fortsetzen* (Bildfolge) oder *Neu rendern (ersetzt)*, die wartenden als „vom letzten
 Mal“ mit *Starten*. Von selbst startet keiner.
 
 **Timecode:** `--timecode 01:00:00:00` legt in Videodateien (Mac) eine Timecode-Spur an, die dort beginnt (mit `;`
@@ -310,6 +352,10 @@ ausrichten.
 | `--csv DATEI.csv` | alle Messwerte je Bild als Tabelle (Excel, Numbers) |
 | `--look N` / `--per-frame-look` | ein Kamera-Look (von Bild N) für alle Bilder / jedes Bild mit eigenem Look |
 | `--keep-hot-pixels` | Hotpixel nicht reparieren (sonst werden sie gefunden und entfernt) |
+| `--sharpen F` | das fertige Video in seiner Größe nachschärfen (0–2; die App nimmt 0,3) – nur Kanten, an den Nachbarpixeln begrenzt: Rauschen, Himmel und Sterne bleiben ruhig |
+| `--sharpen-night F` | mit `--sharpen`: die Stärke im dunkelsten Bild; dazwischen folgt die Schärfung dem Licht der Szene (Tag bis Nacht: `--sharpen 0.3 --sharpen-night 0.1`, wie die App) |
+| `--lens-vignette` | mit Objektivprofil aus der Datenbank auch die Randabdunklung ausgleichen (sonst nur die Verzeichnung) |
+| `--skip-first N` / `--skip-last N` | die ersten / letzten N Fotos des Ordners weglassen (Probeaufnahmen); Bildnummern zählen dann ab dem ersten behaltenen Foto. Lapsewerk schlägt das vor („tip: … test shots?“), wenn Fotos am Anfang oder Ende durch eine lange Pause vom Rest getrennt sind; die App bietet in Schritt 1 „Weglassen“ an |
 | `--reference X,Y,B,H` | Deflicker misst nur in diesem Bildteil |
 | `--size BxH` | Videogröße (Standard 3840×2160) |
 | `--position X,Y` | wo der Ausschnitt im Bild sitzt (0,5,0,5 = Mitte) |
@@ -328,7 +374,7 @@ ausrichten.
 | `--regional 6x4` | regionaler Deflicker in Kacheln (experimentell; glättet auch echte Bewegung wie Wolken) |
 | `--replace-outliers` | auffällige Einzelbilder (Blitz, Scheinwerfer) durch ihre Nachbarn ersetzen |
 | `--fill-gaps` | Pausen der Aufnahme mit Zwischenbildern füllen |
-| `--keep-light F` | Anteil des echten Lichtwechsels, der bleibt (Tag ↔ Nacht; die App nimmt 0,15) |
+| `--keep-light F` | Anteil des echten Lichtwechsels, der bleibt (Tag ↔ Nacht; die App nimmt 0,1) |
 | `--auto-brightness` | zu dunkel gezeigte Serie einmal anheben (Tag auf Tageshelligkeit, Sternennacht mit dunklem Himmel) |
 | `--base-look` | Grund-Look für unbearbeitete Keyframes (Tiefen auf, Lichter gehalten, Kontrast, Dynamik) |
 | `--fit-orientation` | mit `--size`: quer angegebene Größe bei Hochkant-Bildern hochkant drehen |
@@ -344,12 +390,12 @@ ausrichten.
 | `--sequence`, `--out ORDNER` | Bildfolge statt Videodatei (auf jedem System); der Ordner darf nicht der Fotoordner sein |
 | `--name NAME` | Name der Bilder einer Bildfolge statt des Ordnernamens (A–Z, Ziffern, `-`, `_`, `.`) |
 | `--frames tiff\|dpx\|exr` | Bildfolge als 16-Bit-TIFF (Standard), 10-Bit-DPX oder OpenEXR (linear, Halbgleitkomma) |
-| `--resume` | abgebrochene Bildfolge mit denselben Einstellungen fortsetzen (bitgleich) |
+| `--resume` | abgebrochene Bildfolge mit denselben Einstellungen fortsetzen (bitgleich). Folgen eines anderen Programm- oder LightCraft-Stands (Zeile `program` in `INFO.txt`) werden nicht fortgesetzt: mit dem Programm von dort zu Ende rechnen oder überschreiben. |
 | `--overwrite` | ein vorhandenes Video oder die Bilder eines früheren Exports ersetzen (fremde Dateien nie) |
 | `--movie` | doch eine Videodatei (wenn das Projekt eine Bildfolge vorsieht) |
 | `--timecode HH:MM:SS:FF` | Timecode des ersten Bildes (Videodatei am Mac, DPX/EXR); `HH:MM:SS;FF` = Drop-Frame bei 29,97/59,94 |
 | `--brightness F:S,…` | Helligkeit von Hand formen: bei Bild F (ab 1) S Blenden heller (negativ: dunkler) |
-| `--bitrate BPS` | HEVC-Datenrate (Standard etwa 0,2 Bit je Pixel) |
+| `--bitrate BPS` | HEVC-Datenrate (Standard 0,3 Bit je Pixel bei Full HD, 0,2 ab 4K, darunter bis 0,45) |
 | `--denoise-tolerance T` | was beim Entrauschen als Rauschen gilt, in Vielfachen davon (Standard 1; 2 glättet mehr) |
 | `--edge PX` | Größe der Messbilder (Standard 768) |
 | `--jobs N` | Messungen gleichzeitig |
@@ -367,7 +413,7 @@ Grenzen: `--size` höchstens 16384 je Seite, 67 Megapixel und 8:1; `--fps` 1 bis
 | `not in the project (added since the import)` | Seit dem Import kamen Bilder dazu. `lapsewerk import` noch einmal ausführen. |
 | `is the photo folder itself` / `photos of a series` | Das Ziel einer Bildfolge ist ein Fotoordner. Einen eigenen Ordner wählen (z. B. `Lapsewerk-Export/Name`). |
 | `files named like frames that Lapsewerk did not make` | Im Ziel liegen fremde Dateien mit Bildnamen. Sie bleiben unangetastet; einen leeren Ordner wählen. |
-| `rendered with other settings` | Fortsetzen geht nur mit denselben Einstellungen. `--overwrite` statt `--resume`. |
+| `rendered with other settings` | Fortsetzen geht nur mit denselben Einstellungen, denselben Fotos (`--skip-first`/`--skip-last`, „Weglassen“) und denselben Objektivprofilen; die Meldung nennt, was sich unterscheidet. `--overwrite` statt `--resume`. |
 | `another render (process N on this computer, since …) is writing into it` | Ein anderer Export schreibt gerade dorthin; genannt werden Prozess, Rechner und Startzeit. Warten. Die Sperre gilt vom Start an (auch während des Messens) und wird alle paar Minuten erneuert; die eines anderen Rechners, die 30 Minuten nicht erneuert wurde, gilt als liegengeblieben. Liegt sie nach einem Absturz noch da, die versteckte Datei `.lapsewerk-lock` im Zielordner löschen. |
 | `more than fits in memory` | Die Videogröße passt nicht zur Form der Fotos und würde zu groß gerechnet. Eine Größe näher an der Fotoform wählen. |
 | `is a system or home folder` | Das Ziel ist `/`, ein Systemordner oder der Benutzerordner selbst. Einen eigenen Ordner wählen. |

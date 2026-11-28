@@ -22,9 +22,13 @@ use crate::work::{Outcome, Task, lock};
 pub const STEPS: usize = 6;
 
 /// The share of a day to night's change of light the app keeps unless told otherwise: the author's
-/// film from his earlier time-lapse workflow of a Hamburg day to night (8.9 stops) kept about 12 % (1.1 stops); 30 % made
+/// film from their earlier time-lapse workflow of a city day to night (8.9 stops) kept about 12 % (1.1 stops); 30 % made
 /// the night far darker than his.
-pub const KEEP_LIGHT_DEFAULT: f32 = 0.15;
+pub const KEEP_LIGHT_DEFAULT: f32 = 0.10;
+/// Output sharpening the app gives a video ([`lapsewerk_core::sharpen`]): a touch over the earlier
+/// workflow's films (a city series, 540 × 960: detail 265 unsharpened since LightCraft scales with an
+/// area box, against 255 there; 0.5 gave 379), held to each pixel's neighbours so stars get no rings.
+pub const SHARPEN_DEFAULT: f64 = 0.3;
 
 /// Options of step 4.
 #[derive(Clone, Debug, PartialEq)]
@@ -37,11 +41,22 @@ pub struct Finish {
     pub keep_light: Option<f32>,
     /// Black stays black in frames shown brighter than shot.
     pub hold_blacks: bool,
+    /// A sequence shown too dark lifted to a readable brightness (`--auto-brightness`), while no
+    /// keyframe is edited and no brightness drawn.
+    pub auto_bright: bool,
+    /// A lens database's profile evens the corners' vignetting too (`--lens-vignette`).
+    pub lens_vignette: bool,
     /// The video's brightness shaped by hand: (frame, stops) points.
     pub brightness: Vec<(usize, f64)>,
     pub stabilize: bool,
     /// Stabilize by the exact shift (resampled).
     pub subpixel: bool,
+    /// Output sharpening on, and how strong ([`SHARPEN_DEFAULT`] unless changed).
+    pub sharpen: bool,
+    pub sharpen_amount: f64,
+    /// The sharpening weakens along the light to a third by night (`--sharpen-night`, 0.1 for
+    /// 0.3: a dawn shown bright keeps some detail, the night lights stay clean).
+    pub sharpen_fade: bool,
     pub dust: bool,
     pub smooth_motion: bool,
     /// In-between frames along the motion (0: none).
@@ -75,9 +90,14 @@ impl Default for Finish {
             thorough: true,
             keep_light: None,
             hold_blacks: true,
+            auto_bright: true,
+            lens_vignette: false,
             brightness: Vec::new(),
             stabilize: false,
             subpixel: false,
+            sharpen: true,
+            sharpen_amount: SHARPEN_DEFAULT,
+            sharpen_fade: false,
             dust: false,
             smooth_motion: false,
             tween: 0,
@@ -296,6 +316,23 @@ pub const SIZES: [(&str, (usize, usize)); 6] = [
     ("8K UHD", (7680, 4320)),
 ];
 
+/// A video of the whole photo, not cut to 16:9: its shorter side 2160 (as 4K) or the photo's own
+/// when smaller, both even; `None` for a photo already about 16:9 (the presets show it whole).
+#[must_use]
+pub fn whole_photo_size((w, h): (usize, usize)) -> Option<(usize, usize)> {
+    if w == 0 || h == 0 {
+        return None;
+    }
+    let (long, short) = (w.max(h) as f64, w.min(h) as f64);
+    if (long / short - 16.0 / 9.0).abs() < 0.04 {
+        return None;
+    }
+    let side = short.min(2160.0);
+    let even = |v: f64| ((v / 2.0).round() as usize * 2).max(2);
+    let (a, b) = (even(side * long / short), even(side));
+    Some(if w >= h { (a, b) } else { (b, a) })
+}
+
 /// The format a new project exports in: 4K HEVC, good to watch and to share.
 pub const DEFAULT_PRESET: usize = 1;
 
@@ -402,6 +439,12 @@ pub struct ProjectState {
     pub name: String,
     pub files: Vec<PathBuf>,
     pub beside_raws: usize,
+    /// Photos at the folder's start and end left out (test shots, `--skip-first`/`--skip-last`).
+    pub skip: (usize, usize),
+    /// Photos the folder holds, those left out included.
+    pub all_photos: usize,
+    /// Photos at the start or end set apart by a long pause (offered to be left out).
+    pub stray: lapsewerk_core::sequence::StrayEnds,
     pub seq: Option<Arc<Mutex<Sequence>>>,
     pub plan: Option<Arc<DevelopPlan>>,
     pub timing: Option<Timing>,
@@ -427,6 +470,8 @@ pub struct ProjectState {
     pub project_note: Option<String>,
     /// What the target held when last looked at, for which question (see `render_there`).
     pub there_seen: std::sync::Mutex<Option<(Instant, String, Option<lapsewerk_video::frames::RenderThere>)>>,
+    /// Edited frames a resume set aside (`*.kept`) in the target, looked at once in two seconds.
+    pub kept_seen: std::sync::Mutex<Option<(Instant, PathBuf, usize)>>,
     /// The photos' size as last read: kept while an export holds the series, so step 6 does not
     /// lose its notes about it and jump.
     pub source_seen: std::sync::Mutex<Option<(usize, usize)>>,
@@ -442,6 +487,9 @@ pub struct ProjectState {
     pub corrected: Option<Arc<Corrected>>,
     /// The finishing options the corrections were made with.
     pub corrected_with: Option<Finish>,
+    /// Sensor dust spots found while its removal was off, once per opening (`None`: not looked
+    /// for yet): looked for with the first corrections only, not again at every change of step 4.
+    pub dust_known: Option<usize>,
     pub video_version: u64,
     pub step: usize,
     pub reached: usize,
@@ -475,6 +523,8 @@ pub struct ProjectState {
     pub codec: Option<Codec>,
     /// Rec. 709 (BT.1886) instead of sRGB for SDR; `None`: for ProRes masters, sRGB otherwise.
     pub rec709: Option<bool>,
+    /// HEVC at a high quality: half again the default rate ([`lapsewerk_video::hevc_bits_per_pixel`]).
+    pub hq: bool,
     pub hdr: bool,
     /// HDR as HLG (broadcast, looks right on SDR screens too) instead of PQ (HDR10).
     pub hlg: bool,
@@ -492,6 +542,14 @@ pub struct ProjectState {
     pub exported: Option<PathBuf>,
     /// What the movie exported last delivers ([`Self::movie_delivery`] when it was made).
     pub delivered: Option<String>,
+    /// A series into the night or a night throughout, found with the analysis.
+    pub night: bool,
+    /// A night throughout by its exposures (a starry sky, a city at night).
+    pub night_through: bool,
+    /// Stretches of frames of the last export whose colours reached their limit (said on its card).
+    pub colour_clip: Option<Vec<ClipStretch>>,
+    /// The frames that export wrote (to say "throughout" when a stretch is all of them).
+    pub colour_clip_of: Option<usize>,
     /// The delivery as checked against its checksums ("Check delivery"): as written, and what differs.
     pub verified: Option<(usize, Vec<String>)>,
     /// The folder [`Self::verified`] was checked in.
@@ -514,6 +572,8 @@ pub struct ProjectState {
     /// The first frame's size as the plan develops it, known before the analysis (kept up to
     /// date in `sync_framing`).
     pub developed: Option<(usize, usize)>,
+    /// The lens as named in the files, and how it is corrected ([`Sequence::lens`]).
+    pub lens: (String, Option<bool>),
     /// The frame (from 0) the night sky work found its sky in, once looked for.
     pub sky_frame: Option<usize>,
     /// A slow swell or kink over 10-20 frames, as `--verify` names it (frame from 0, stops).
@@ -651,13 +711,30 @@ impl ProjectState {
         if !self.sequence {
             return None;
         }
-        let args = self.render_args(false);
+        let mut args = self.render_args(false);
+        // The automatic lift as the corrections worked it out (a brightness point of its own in
+        // the delivery's settings), or a fresh delivery that was lifted was taken for another.
+        if let Some(c) = &self.corrected
+            && args.auto_brightness
+            && args.brightness.is_empty()
+        {
+            args.brightness.clone_from(&c.render.brightness);
+        }
         let manifest = match (&self.plan, &self.corrected, &self.seq) {
             (Some(plan), Some(c), Some(seq))
                 if !self.stale && self.corrected_with.as_ref() == Some(&self.finish) =>
             {
-                crate::work::try_lock(seq)
-                    .map(|s| lapsewerk_studio::export::frames_manifest(&args, plan, &c.offsets, s.len()))
+                // The plan as the export renders it (base look, crop fitted to the video), or the
+                // app took its own fresh delivery for another ("keyframe 1 edited since").
+                crate::work::try_lock(seq).map(|s| {
+                    let looked = lapsewerk_studio::framed_plan(
+                        &s,
+                        plan,
+                        args.base_look,
+                        (args.video.width, args.video.height),
+                    );
+                    lapsewerk_studio::export::frames_manifest(&args, &looked, &c.offsets, s.len())
+                })
             }
             _ => None,
         };
@@ -734,7 +811,7 @@ impl ProjectState {
             None => 0,
         };
         let changed = names.len().saturating_sub(missing);
-        let part = |text: &str, n: usize| text.replace("{n}", &n.to_string());
+        let part = |text: [&str; 2], n: usize| crate::text::counted(text, n);
         match (changed, missing) {
             (c, 0) => part(t.damaged_changed, c),
             (0, m) => part(t.damaged_missing, m),
@@ -784,18 +861,54 @@ impl ProjectState {
     pub fn base_look(&self) -> bool {
         self.sidecar_keyframes
             .iter()
-            .all(|k| self.untouched.iter().any(|(f, _)| f == k))
+            // A sidecar nothing can read edits nothing.
+            .all(|k| self.untouched.iter().any(|(f, _)| f == k) || self.unreadable.contains(k))
+    }
+
+    /// Keyframes edited by hand (in the app, LightCraft or another raw editor), not left automatic.
+    #[must_use]
+    pub fn edited_keyframes(&self) -> usize {
+        self.sidecar_keyframes
+            .iter()
+            .filter(|k| !self.untouched.iter().any(|(f, _)| f == *k) && !self.unreadable.contains(k))
+            .count()
+    }
+
+    /// Whether keeping a share of the change of light is recommended: a day to night whose
+    /// brightness no two keyframes edited by hand already set (as in a holy grail edited in
+    /// another raw editor, whose keyframes say how bright each part is).
+    #[must_use]
+    pub fn day_night_recommended(&self, a: &lapsewerk_studio::Analysis) -> bool {
+        a.day_to_night() && self.edited_keyframes() < 2
     }
 
     /// Whether a dark sequence is lifted to a readable brightness (`--auto-brightness`): as long as
     /// no keyframe is edited by hand and no brightness is drawn. An edited look says how bright.
     #[must_use]
     pub fn auto_brightness(&self) -> bool {
-        self.brightness_points().is_empty()
+        self.finish.auto_bright
+            && self.brightness_points().is_empty()
             && self
                 .sidecar_keyframes
                 .iter()
-                .all(|k| self.untouched.iter().any(|(f, _)| f == k))
+                // A sidecar nothing can read edits nothing.
+                .all(|k| self.untouched.iter().any(|(f, _)| f == k) || self.unreadable.contains(k))
+    }
+
+    /// The HEVC rate for "high quality": half again the default for the size; `None` otherwise.
+    #[must_use]
+    pub fn hq_bitrate(
+        &self,
+        w: usize,
+        h: usize,
+        codec: lapsewerk_video::Codec,
+        fps_num: u32,
+        fps_den: u32,
+    ) -> Option<u64> {
+        (self.hq && !self.sequence && codec == lapsewerk_video::Codec::Hevc).then(|| {
+            let fps = f64::from(fps_num) / f64::from(fps_den.max(1));
+            (1.5 * lapsewerk_video::hevc_bits_per_pixel(w, h) * (w * h) as f64 * fps).round() as u64
+        })
     }
 
     /// The render arguments for `finish` and the export choices; `preview` leaves out what only
@@ -805,18 +918,28 @@ impl ProjectState {
         let f = &self.finish;
         let ((w, h), codec, (fps_num, fps_den), transfer) = self.format();
         RenderArgs {
+            photos: lapsewerk_studio::photos_words(&self.files),
+            lens_vignette: f.lens_vignette,
             out: self.target(),
             sequence: self.sequence,
             frame_format: self.frame_format,
             resume: false,
             subpixel: f.stabilize && f.subpixel,
+            // Rounded as saved (a slider's steps leave 0.30000000000000004, which a resume from the
+            // project, reading 0.3, took for another strength).
+            sharpen: if f.sharpen {
+                (f.sharpen_amount * 100.0).round() / 100.0
+            } else {
+                0.0
+            },
+            sharpen_night: (f.sharpen && f.sharpen_fade).then(|| night_sharpen(f.sharpen_amount)),
             video: VideoSettings {
                 width: w,
                 height: h,
                 fps_num,
                 fps_den,
                 codec,
-                bitrate: None,
+                bitrate: self.hq_bitrate(w, h, codec, fps_num, fps_den),
                 transfer,
                 timecode: self.timecode_count().map(|(c, _)| c),
                 drop_frame: self.timecode_count().is_some_and(|(_, d)| d),
@@ -922,6 +1045,7 @@ impl ProjectState {
             edge: self.finish.edge,
             reference: self.reference_rect(),
             stabilize: self.finish.stabilize,
+            dust_hint: self.dust_known.is_none(),
             ..Default::default()
         }
     }
@@ -1056,6 +1180,15 @@ impl ProjectState {
         };
         let ((w, h), codec, (fps_num, fps_den), transfer) = self.format();
         put("--out", Some(self.target().to_string_lossy().into_owned()));
+        if self.skip.0 > 0 {
+            put("--skip-first", Some(self.skip.0.to_string()));
+        }
+        if self.finish.lens_vignette {
+            put("--lens-vignette", None);
+        }
+        if self.skip.1 > 0 {
+            put("--skip-last", Some(self.skip.1.to_string()));
+        }
         if self.sequence {
             put("--sequence", None);
             if self.frame_format != FrameFormat::Tiff {
@@ -1083,6 +1216,10 @@ impl ProjectState {
         }
         if !self.sequence {
             put("--codec", Some(codec_name(codec).to_owned()));
+            let (w, h) = self.format().0;
+            if let Some(b) = self.hq_bitrate(w, h, codec, fps_num, fps_den) {
+                put("--bitrate", Some(b.to_string()));
+            }
         }
         // A name typed is passed on even when frames can't take it: the command line refuses it
         // then, as the app does, instead of rendering under another name.
@@ -1150,6 +1287,12 @@ impl ProjectState {
             put("--stabilize", None);
             if f.subpixel {
                 put("--subpixel", None);
+            }
+        }
+        if f.sharpen {
+            put("--sharpen", Some(num((f.sharpen_amount * 100.0).round() / 100.0)));
+            if f.sharpen_fade {
+                put("--sharpen-night", Some(num(night_sharpen(f.sharpen_amount))));
             }
         }
         if f.dust {
@@ -1294,6 +1437,29 @@ impl ProjectState {
         lapsewerk_video::space::estimate_bytes(&video, format, left)
     }
 
+    /// Frames a resume set aside in the frame folder (`*.kept`: edited by someone, kept rather
+    /// than overwritten): not part of the delivery, so said before it is sent on.
+    #[must_use]
+    pub fn kept_files(&self) -> usize {
+        if !self.sequence {
+            return 0;
+        }
+        let dir = self.target();
+        let Ok(mut seen) = self.kept_seen.lock() else {
+            return 0;
+        };
+        if let Some((at, d, n)) = seen.as_ref()
+            && *d == dir
+            && at.elapsed().as_secs() < 2
+        {
+            return *n;
+        }
+        // `.kept`, `.kept-2`, …: as the delivery's own notes count them.
+        let n = lapsewerk_video::frames::set_aside_files(&dir).len();
+        *seen = Some((Instant::now(), dir, n));
+        n
+    }
+
     /// Where the export goes: the movie, or (a frame sequence) a folder named like it.
     #[must_use]
     pub fn target(&self) -> PathBuf {
@@ -1354,14 +1520,32 @@ impl ProjectState {
         } else {
             crate::text::clock(std::time::Duration::from_secs_f64(s))
         };
-        // Frames put in for gaps count: said, or the length looks wrong for the photos.
+        // Frames put in for gaps count: said, or the length looks wrong for the photos; and
+        // damaged photos at the ends, which nothing replaces.
+        let mut notes = Vec::new();
         match self.gap_frames() {
-            0 => length,
-            1 => format!("{length} ({})", lang.t().with_gap_frame),
-            g => format!(
-                "{length} ({})",
-                lang.t().with_gap_frames.replace("{n}", &g.to_string())
-            ),
+            0 => {}
+            1 => notes.push(lang.t().with_gap_frame.to_owned()),
+            g => notes.push(lang.t().with_gap_frames.replace("{n}", &g.to_string())),
+        }
+        let inside: usize = self.skipped_gaps.iter().map(|(_, m)| m).sum();
+        let edge = self.skipped_names.len().saturating_sub(inside);
+        if edge > 0 {
+            notes.push(crate::text::counted(lang.t().without_edge_frames, edge));
+        }
+        // Test shots: left out, or still in (a flash at the start or end of the video).
+        let left_out = self.skip.0 + self.skip.1;
+        if left_out > 0 {
+            notes.push(crate::text::counted(lang.t().without_test_shots, left_out));
+        }
+        let still_in = self.stray.lead + self.stray.trail;
+        if still_in > 0 {
+            notes.push(crate::text::counted(lang.t().with_test_shots, still_in));
+        }
+        if notes.is_empty() {
+            length
+        } else {
+            format!("{length} ({})", notes.join("; "))
         }
     }
 
@@ -1449,12 +1633,13 @@ impl ProjectState {
         let f = &self.finish;
         json!({
             "reached": self.reached,
+            "skip": [self.skip.0, self.skip.1],
             "untouchedKeyframes": self.untouched.iter().map(|(f, fp)| json!([f, fp])).collect::<Vec<_>>(),
             "editedSeen": self.edited_seen,
             "step": self.step,
             "finish": {
-                "deflicker": f.deflicker, "smoothing": f.smoothing, "thorough": f.thorough, "keepLight": f.keep_light, "holdBlacks": f.hold_blacks, "brightness": f.brightness,
-                "stabilize": f.stabilize, "subpixel": f.subpixel, "dust": f.dust, "smoothMotion": f.smooth_motion, "tween": f.tween,
+                "deflicker": f.deflicker, "smoothing": f.smoothing, "thorough": f.thorough, "keepLight": f.keep_light, "holdBlacks": f.hold_blacks, "autoBright": f.auto_bright, "lensVignette": f.lens_vignette, "brightness": f.brightness,
+                "stabilize": f.stabilize, "subpixel": f.subpixel, "sharpen": f.sharpen, "sharpenAmount": (f.sharpen_amount * 100.0).round() / 100.0, "sharpenFade": f.sharpen_fade, "dust": f.dust, "smoothMotion": f.smooth_motion, "tween": f.tween,
                 "denoise": f.denoise, "lightPollution": f.light_pollution, "reduceStars": f.reduce_stars,
                 "trails": f.trails, "sky": f.sky, "reference": f.reference, "referenceLow": f.reference_low, "regional": f.regional,
                 "edge": f.edge, "replaceOutliers": f.replace_outliers, "replaceMarked": f.replace_marked,
@@ -1467,7 +1652,10 @@ impl ProjectState {
             "render": self.cli_args(),
             "export": { "preset": self.preset, "fps": self.fps, "hdr": self.hdr, "hlg": self.hlg, "sequence": self.sequence, "frames": self.frame_format.ext(), "ntsc": self.ntsc,
                 "size": self.size.map(|(w, h)| [w, h]), "codec": self.codec.map(codec_name),
-                "rec709": self.rec709, "timecode": self.timecode, "frameName": self.frame_name, "out": self.out_for_file(), "folderName": self.name, "folderPath": self.folder },
+                "rec709": self.rec709, "hq": self.hq, "timecode": self.timecode, "frameName": self.frame_name, "out": self.out_for_file(), "folderName": self.name, "folderPath": self.folder,
+                "exported": self.exported.as_ref().map(|p| p.to_string_lossy().into_owned()),
+                "colourClipOf": self.colour_clip_of,
+                "colourClip": self.colour_clip.as_ref().map(|c| c.iter().map(|s| json!([s.from, s.to, s.colour, s.percent])).collect::<Vec<_>>()) },
             "measured": self.measured.zip(self.measured_for.as_ref()).map(|((whole, worst), print)| json!({
                 "for": print, "whole": whole, "worst": worst.map(|(a, j)| json!([a, j])),
                 "jump": self.measured_jump, "step": self.measured_step, "wave": self.measured_wave.map(|(a, v)| json!([a, v])), "waveSpan": self.measured_wave_span.map(|(a, b)| json!([a, b])),
@@ -1511,6 +1699,10 @@ impl ProjectState {
         if let Some(r) = v.get("reached").and_then(Value::as_u64) {
             self.reached = (r as usize).clamp(1, STEPS);
         }
+        if let Some(a) = v.get("skip").and_then(Value::as_array) {
+            let at = |k: usize| a.get(k).and_then(Value::as_u64).map_or(0, |n| n as usize);
+            self.skip = (at(0), at(1));
+        }
         self.untouched = lapsewerk_studio::cache::untouched_in(v);
         // Shared with the command line: what the edited keyframes held when the others followed.
         self.edited_seen = v
@@ -1527,6 +1719,8 @@ impl ProjectState {
                 .map_or(8.0, |v| v.clamp(2.0, 30.0) as f32);
             d.keep_light = num(f, "keepLight").map(|x| x.clamp(0.0, 1.0) as f32);
             d.hold_blacks = flag(f, "holdBlacks").unwrap_or(true);
+            d.auto_bright = flag(f, "autoBright").unwrap_or(true);
+            d.lens_vignette = flag(f, "lensVignette").unwrap_or(false);
             d.brightness = f
                 .get("brightness")
                 .and_then(Value::as_array)
@@ -1544,6 +1738,26 @@ impl ProjectState {
                 .unwrap_or_default();
             d.stabilize = flag(f, "stabilize").unwrap_or(false);
             d.subpixel = flag(f, "subpixel").unwrap_or(false);
+            // A project from before the sharpening keeps its look (as with day ↔ night).
+            // A project made before the strength was kept: the one its last render used (in its
+            // command), so a delivery redone matches the first.
+            let rendered = v
+                .get("render")
+                .and_then(Value::as_array)
+                .and_then(|r| {
+                    let words: Vec<&str> = r.iter().filter_map(Value::as_str).collect();
+                    let i = words.iter().position(|w| *w == "--sharpen")?;
+                    words.get(i + 1)?.parse::<f64>().ok()
+                })
+                .filter(|v| (0.1..=2.0).contains(v));
+            d.sharpen = flag(f, "sharpen").unwrap_or(rendered.is_some());
+            d.sharpen_amount = f
+                .get("sharpenAmount")
+                .and_then(Value::as_f64)
+                .filter(|v| (0.1..=2.0).contains(v))
+                .or(rendered)
+                .unwrap_or(SHARPEN_DEFAULT);
+            d.sharpen_fade = flag(f, "sharpenFade").unwrap_or(false);
             d.dust = flag(f, "dust").unwrap_or(false);
             d.smooth_motion = flag(f, "smoothMotion").unwrap_or(false);
             d.tween = f
@@ -1597,6 +1811,27 @@ impl ProjectState {
             };
         }
         if let Some(e) = v.get("export") {
+            // The last export (a movie: a frame sequence is found by its frames) while it is
+            // there, and what it said about colours at their limit.
+            self.exported = e
+                .get("exported")
+                .and_then(Value::as_str)
+                .map(PathBuf::from)
+                .filter(|p| p.is_file());
+            self.colour_clip = e.get("colourClip").and_then(Value::as_array).map(|a| {
+                a.iter()
+                    .filter_map(|p| {
+                        let p = p.as_array()?;
+                        Some(ClipStretch {
+                            from: p.first()?.as_u64()? as usize,
+                            to: p.get(1)?.as_u64()? as usize,
+                            colour: p.get(2).and_then(Value::as_str).unwrap_or("").to_owned(),
+                            percent: p.get(3).and_then(Value::as_u64).unwrap_or(0) as u32,
+                        })
+                    })
+                    .collect()
+            });
+            self.colour_clip_of = e.get("colourClipOf").and_then(Value::as_u64).map(|n| n as usize);
             self.preset_chosen = e.get("preset").is_some();
             self.preset = e
                 .get("preset")
@@ -1619,13 +1854,20 @@ impl ProjectState {
             self.size = e.get("size").and_then(Value::as_array).and_then(|a| {
                 let w = a.first()?.as_u64()? as usize;
                 let h = a.get(1)?.as_u64()? as usize;
-                SIZES.iter().map(|(_, s)| *s).find(|s| *s == (w, h))
+                // A preset size, or the whole photo's ([`whole_photo_size`]).
+                (SIZES.iter().any(|(_, s)| *s == (w, h))
+                    || ((2..=8192).contains(&w)
+                        && (2..=8192).contains(&h)
+                        && w.is_multiple_of(2)
+                        && h.is_multiple_of(2)))
+                .then_some((w, h))
             });
             self.codec = e
                 .get("codec")
                 .and_then(Value::as_str)
                 .and_then(|n| CODECS.into_iter().find(|c| codec_name(*c) == n));
             self.rec709 = flag(e, "rec709");
+            self.hq = flag(e, "hq").unwrap_or(false);
             self.timecode = e
                 .get("timecode")
                 .and_then(Value::as_str)
@@ -1711,6 +1953,13 @@ pub enum TaskKind {
 }
 
 /// A message at the bottom: text, is it an error, since when.
+/// The sharpening by night when it fades along the light: a third of the day's, rounded to
+/// hundredths as saved (Tim, 28.11.: 0.1 for 0.3; 0 left a dawn shown bright too soft).
+#[must_use]
+pub fn night_sharpen(amount: f64) -> f64 {
+    (amount * 100.0 / 3.0).round() / 100.0
+}
+
 pub struct Message {
     pub text: String,
     pub error: bool,
@@ -1728,6 +1977,12 @@ pub struct App {
     /// Close although the queue renders (answered).
     pub close_anyway: bool,
     pub recent: Recent,
+    /// The lens database (lensfun): where it stands, and its download once clicked.
+    pub lens_status: lapsewerk_develop::lens_db::Status,
+    pub lens_fetch: lapsewerk_develop::lens_db::Fetch,
+    /// The download was started by the app itself (an earlier yes): a failure (offline) is not
+    /// said at every start, the offer stays.
+    pub lens_quiet: bool,
     pub project: Option<ProjectState>,
     pub previews: Previews,
     pub task: Option<(TaskKind, Task)>,
@@ -1793,6 +2048,9 @@ impl App {
         let mut app = Self {
             lang,
             recent,
+            lens_status: lapsewerk_develop::lens_db::status(),
+            lens_fetch: lapsewerk_develop::lens_db::Fetch::default(),
+            lens_quiet: false,
             project: None,
             previews: Previews::new(ctx),
             task: None,
@@ -1832,7 +2090,49 @@ impl App {
                 .replace("{file}", &aside.display().to_string());
             app.say(text, true);
         }
+        // Said yes to the lens database before and it is missing (a new pin, a cleaned folder):
+        // fetched again, as LightCraft does; never without that yes.
+        if app.recent.lens_database == Some(true) {
+            app.lens_quiet = true;
+            app.start_lens_download();
+        }
         app
+    }
+
+    /// Downloads the lens database (the user's click, or their earlier yes).
+    pub fn start_lens_download(&mut self) {
+        if let lapsewerk_develop::lens_db::Status::Missing(dir) = &self.lens_status
+            && let Err(e) = self.lens_fetch.start(dir)
+        {
+            let text = format!("{}: {e}", self.lang.t().lens_db_failed);
+            self.say(text, true);
+        }
+    }
+
+    /// Follows the lens database download: when it ends, says so and reads where it stands.
+    pub fn lens_tick(&mut self) {
+        use lapsewerk_develop::lens_db::Progress;
+        match self.lens_fetch.progress() {
+            Progress::Running { .. } => self
+                .ctx
+                .request_repaint_after(std::time::Duration::from_millis(200)),
+            Progress::Done if self.lens_status != lapsewerk_develop::lens_db::Status::Installed => {
+                self.lens_status = lapsewerk_develop::lens_db::status();
+                let text = self.lang.t().lens_db_done;
+                self.say(text, false);
+            }
+            Progress::Failed(e)
+                if !matches!(self.lens_status, lapsewerk_develop::lens_db::Status::Unavailable) =>
+            {
+                // Said once: then offered again (the folder stays as it was).
+                self.lens_fetch = lapsewerk_develop::lens_db::Fetch::default();
+                if !std::mem::take(&mut self.lens_quiet) {
+                    let text = format!("{}: {e}", self.lang.t().lens_db_failed);
+                    self.say(text, true);
+                }
+            }
+            _ => {}
+        }
     }
 
     pub fn set_lang(&mut self, lang: Lang) {
@@ -1976,8 +2276,11 @@ impl App {
             folder: folder.to_path_buf(),
             out: folder.join(EXPORT_DIR).join(format!("{name}.mov")),
             name,
+            all_photos: frames.files.len(),
             files: frames.files,
             beside_raws: frames.beside_raws,
+            skip: (0, 0),
+            stray: lapsewerk_core::sequence::StrayEnds::default(),
             seq: None,
             plan: None,
             timing: None,
@@ -1992,6 +2295,7 @@ impl App {
             other_editor: Vec::new(),
             project_note: None,
             there_seen: std::sync::Mutex::new(None),
+            kept_seen: std::sync::Mutex::new(None),
             source_seen: std::sync::Mutex::new(None),
             space_refused: false,
             space_anyway: false,
@@ -2000,6 +2304,13 @@ impl App {
             stale: false,
             corrected: None,
             corrected_with: None,
+            // Dust found before (kept with the corrections): said at once, at step 4 and the export,
+            // not only after the preview has been worked out again.
+            dust_known: std::fs::read_to_string(folder.join(lapsewerk_studio::cache::CORRECTIONS_FILE))
+                .ok()
+                .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+                .and_then(|v| v.get("dustSeen")?.as_u64())
+                .map(|n| n as usize),
             video_version: 0,
             step: 1,
             reached: 1,
@@ -2023,6 +2334,7 @@ impl App {
             size: None,
             codec: None,
             rec709: None,
+            hq: false,
             fps: 25,
             hdr: false,
             hlg: false,
@@ -2032,6 +2344,10 @@ impl App {
             frame_name: String::new(),
             exported: None,
             delivered: None,
+            colour_clip: None,
+            colour_clip_of: None,
+            night: false,
+            night_through: false,
             verified: None,
             verified_dir: None,
             proof: None,
@@ -2041,6 +2357,7 @@ impl App {
             measured_step: false,
             untouched_kept: Vec::new(),
             shown_video: (0, 0),
+            lens: (String::new(), None),
             developed: None,
             sky_frame: None,
             measured_wave: None,
@@ -2068,24 +2385,23 @@ impl App {
                 damaged = Some(self.lang.t().project_newer.to_owned());
             }
             Err(_) => {
-                let from = folder.join(lapsewerk_develop::project::FILE_NAME);
-                // Never over an earlier damaged copy (it may hold more).
-                let name = lapsewerk_develop::project::FILE_NAME;
-                let to = (1..100)
-                    .map(|k| {
-                        folder.join(if k == 1 {
-                            format!("{name}.damaged")
-                        } else {
-                            format!("{name}.damaged-{k}")
-                        })
-                    })
-                    .find(|p| !p.exists())
-                    .unwrap_or_else(|| folder.join(format!("{name}.damaged-last")));
-                damaged = Some(if std::fs::rename(&from, &to).is_ok() {
+                damaged = Some(if lapsewerk_develop::project::set_aside_damaged(folder).is_ok() {
                     self.lang.t().project_damaged.to_owned()
                 } else {
                     self.lang.t().project_newer.to_owned()
                 });
+            }
+        }
+        // Test shots left out before: the photos kept (all, when the folder has fewer now).
+        if p.skip != (0, 0) {
+            let all = p.files.len();
+            if p.skip.0 + p.skip.1 + 2 <= all {
+                p.files = p
+                    .files
+                    .get(p.skip.0..all - p.skip.1)
+                    .map_or_else(Vec::new, <[PathBuf]>::to_vec);
+            } else {
+                p.skip = (0, 0);
             }
         }
         // Coming back to a project: the analysis is measured again, so start at most at step 2.
@@ -2104,8 +2420,13 @@ impl App {
             }
             self.say(text, true);
         }
+        let lens_vignette = self.project.as_ref().is_some_and(|p| p.finish.lens_vignette);
         let task = Task::spawn(&self.ctx, move |rep| {
-            let opened = lapsewerk_studio::open(&files, &OpenSettings::default(), rep);
+            let open = OpenSettings {
+                lens_vignette,
+                ..OpenSettings::default()
+            };
+            let opened = lapsewerk_studio::open(&files, &open, rep);
             match opened {
                 Ok((seq, plan)) => {
                     let timing = lapsewerk_core::sequence::timing(seq.frames());
@@ -2131,6 +2452,57 @@ impl App {
         if let Ok(Some(mut file)) = ProjectFile::load(&p.folder) {
             file.app = Some(p.app_settings());
             let _ = file.save(&p.folder);
+        }
+    }
+
+    /// Leaves out the photos `skip` names at the folder's start and end (test shots), or takes
+    /// them back with (0, 0): the folder opened again with them. What is set by frame (the drawn
+    /// brightness, frames marked to replace, keyframes left automatic) moves with the frames.
+    pub fn set_skip(&mut self, skip: (usize, usize)) {
+        let Some(p) = &mut self.project else { return };
+        if p.skip == skip || self.task.is_some() {
+            return;
+        }
+        let shift = |i: usize| -> Option<usize> {
+            let at = (i + p.skip.0).checked_sub(skip.0)?;
+            (at < p.all_photos.saturating_sub(skip.0 + skip.1)).then_some(at)
+        };
+        p.finish.brightness = p
+            .finish
+            .brightness
+            .iter()
+            .filter_map(|&(f, s)| Some((shift(f)?, s)))
+            .collect();
+        p.finish.replace_marked = p.finish.replace_marked.iter().filter_map(|&f| shift(f)).collect();
+        p.untouched = p
+            .untouched
+            .iter()
+            .filter_map(|(f, fp)| Some((shift(*f)?, fp.clone())))
+            .collect();
+        p.skip = skip;
+        // The measurement was of other frames.
+        p.measured = None;
+        p.reached = 1;
+        p.step = 1;
+        let folder = p.folder.clone();
+        self.save_project_settings();
+        self.open_folder(&folder);
+    }
+
+    /// Turns the lens profile's vignetting correction on or off: the folder opened again with it
+    /// (the frames' development changes, so their analysis too).
+    pub fn set_lens_vignette(&mut self, on: bool) {
+        let Some(p) = &mut self.project else { return };
+        if p.finish.lens_vignette == on || self.task.is_some() {
+            return;
+        }
+        p.finish.lens_vignette = on;
+        p.measured = None;
+        let (folder, step) = (p.folder.clone(), p.step);
+        self.save_project_settings();
+        self.open_folder(&folder);
+        if let Some(p) = &mut self.project {
+            p.step = step.min(p.reached.max(1));
         }
     }
 
@@ -2388,6 +2760,7 @@ impl App {
         let opts = p.measure_settings();
         if !proof {
             p.exported = None;
+            p.colour_clip = None;
         }
         let folder = p.folder.clone();
         self.save_project_settings();
@@ -2845,12 +3218,20 @@ impl App {
                 .collect()
         };
         let mut changed = Vec::new();
+        // Seen for the first time: damaged then means damaged when opened (said as on opening),
+        // not "just saved damaged".
+        let mut first = Vec::new();
         for (f, path) in sidecars {
             let time = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
             // First seen (just opened, or after a task kept this from looking): read again too, so a
             // save while measuring is not taken for the time it was seen at; equal settings say nothing.
-            if p.watched.insert(f, time).is_none_or(|before| before != time) {
-                changed.push(f);
+            match p.watched.insert(f, time) {
+                None => {
+                    first.push(f);
+                    changed.push(f);
+                }
+                Some(before) if before != time => changed.push(f),
+                Some(_) => {}
             }
         }
         let mut edited = Vec::new();
@@ -2863,7 +3244,13 @@ impl App {
             // Read again, and readable as a sidecar (one cut short or not text reads "fine" but
             // holds no settings: said, as on opening).
             if s.reload_keyframe(f).is_err() || s.unreadable_sidecars().contains(&f) {
-                broken.push(f);
+                if first.contains(&f) {
+                    if !p.unreadable.contains(&f) {
+                        p.unreadable.push(f);
+                    }
+                } else {
+                    broken.push(f);
+                }
                 continue;
             }
             if format!("{:?}", s.settings(f).ok()) != before {
@@ -3128,6 +3515,7 @@ impl App {
         let Some(p) = &mut self.project else { return };
         // Settings chosen for the user (day to night recommended): in the project file at once,
         // so a render from the command line or the queue has them too.
+        let mut said_after: Option<String> = None;
         let mut save = false;
         match outcome {
             Outcome::Opened(o) => {
@@ -3177,6 +3565,11 @@ impl App {
                 p.camera_data = o.seq.frames().iter().filter(|f| f.exposure.is_some()).count();
                 p.skipped_gaps = o.seq.skipped_gaps();
                 p.timing = o.timing;
+                p.stray = p
+                    .timing
+                    .as_ref()
+                    .map(|t| lapsewerk_core::sequence::stray_ends(o.seq.frames(), t))
+                    .unwrap_or_default();
                 // A new project of photos smaller than 4K: Full HD, not a 4K video scaled up.
                 if !p.preset_chosen && o.seq.source_size(0).is_some_and(|(w, h)| w.max(h) < 3840) {
                     p.preset = 2;
@@ -3190,6 +3583,7 @@ impl App {
                 odd.retain(|f| !p.other_editor.contains(f));
                 p.unreadable = odd;
                 p.developed = lapsewerk_studio::developed_size(&o.seq, &o.plan, 0);
+                p.lens = o.seq.lens(0);
                 let seq = Arc::new(Mutex::new(o.seq));
                 let plan = Arc::new(o.plan);
                 p.seq = Some(Arc::clone(&seq));
@@ -3215,8 +3609,28 @@ impl App {
             Outcome::Analysed(a) => {
                 // A day-to-night sequence: keep some of the change of light (recommended), unless the
                 // options were changed already.
-                if a.day_to_night() && p.finish == Finish::default() {
+                let untouched = p.finish == Finish::default();
+                if p.day_night_recommended(&a) && untouched {
                     p.finish.keep_light = Some(KEEP_LIGHT_DEFAULT);
+                    save = true;
+                }
+                // A night throughout (a starry sky): no output sharpening unless asked for (stars and
+                // lights kept without faint dark seams); day into night: lightly (below).
+                // A night throughout only if the light does not go from day into night (a holy
+                // grail mostly at night is still day into night: its day keeps the sharpening).
+                let night_through = !a.day_to_night()
+                    && p.seq
+                        .as_ref()
+                        .is_some_and(|s| lapsewerk_studio::night_series(&lock(s)));
+                p.night = a.day_to_night() || night_through;
+                p.night_through = night_through;
+                if untouched && night_through {
+                    p.finish.sharpen = false;
+                    save = true;
+                } else if untouched && a.day_to_night() {
+                    // Day into night: as by day while it is day, weakening to a third along the light into the
+                    // night (the day keeps its crispness, the night lights get no seam).
+                    p.finish.sharpen_fade = true;
                     save = true;
                 }
                 let (frames, skipped): (Vec<lapsewerk_core::sequence::Frame>, Vec<(usize, usize)>) = p
@@ -3340,8 +3754,17 @@ impl App {
                     p.measured = None;
                     p.measured_wave = None;
                 }
+                // Dust seen while its removal is off: said now, when the preview shows it.
+                if c.dust_seen.is_some() {
+                    p.dust_known = c.dust_seen;
+                }
+                let dust_note = p
+                    .dust_known
+                    .filter(|n| *n > 0 && !p.finish.dust)
+                    .map(|n| crate::text::counted(t.dust_seen, n));
                 p.corrected = Some(Arc::from(c));
                 p.stale = false;
+                said_after = dust_note;
                 p.video_version += 1;
                 let v = p.video_version;
                 self.previews
@@ -3398,14 +3821,18 @@ impl App {
                 p.delivered = (!frames).then(|| p.movie_delivery());
                 p.exported = Some(path);
                 p.verified = None;
-                self.say(
-                    if frames {
-                        t.export_done_frames
-                    } else {
-                        t.export_done
-                    },
-                    false,
-                );
+                let done = if frames {
+                    t.export_done_frames
+                } else {
+                    t.export_done
+                };
+                // A saturated sky at its limit (said by the export's log): kept for the done card,
+                // which says it with what helps.
+                p.colour_clip = notes.iter().find_map(|n| colour_clip_frames(n));
+                p.colour_clip_of = notes.iter().find_map(|n| written_frames(n));
+                // Kept with the project: the done card and its note come back after a restart.
+                save = true;
+                self.say(done, false);
             }
             Outcome::Cancelled => {
                 if kind == TaskKind::Correct {
@@ -3422,6 +3849,9 @@ impl App {
         }
         if save {
             self.save_project_settings();
+        }
+        if let Some(note) = said_after {
+            self.say(note, false);
         }
     }
 
@@ -3654,9 +4084,172 @@ fn sidecar_print(seq: &lapsewerk_develop::Sequence, frame: usize) -> String {
     lapsewerk_studio::cache::sidecar_print(seq, frame)
 }
 
+/// A stretch of frames whose colours reached their limit, as the export's log said it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClipStretch {
+    pub from: usize,
+    pub to: usize,
+    /// "blue", "red at zero" …
+    pub colour: String,
+    /// Its worst frame's share of the picture.
+    pub percent: u32,
+}
+
+/// The stretches of the export log's line about colours at their limit, if it has one.
+fn colour_clip_frames(line: &str) -> Option<Vec<ClipStretch>> {
+    let rest = line.strip_prefix("colour clip:")?;
+    // "…: frames 171–340 (blue, up to 52 % in frame 291), frame 391 (red, …); a saturated colour …"
+    // "… of the picture (a channel at zero: 18 %): frames …" (or without the bracket)
+    let at = rest.find("picture")?;
+    let after = rest.get(at..)?;
+    let (_, list) = if after.starts_with("picture (") {
+        after.split_once("): ")?
+    } else {
+        after.split_once(": ")?
+    };
+    let (list, _) = list.split_once("; ").unwrap_or((list, ""));
+    let found: Vec<ClipStretch> = list
+        .split("), ")
+        .filter_map(|item| {
+            let item = item.trim();
+            let range = item
+                .strip_prefix("frames ")
+                .or_else(|| item.strip_prefix("frame "))?;
+            let (range, detail) = range.split_once(" (").unwrap_or((range, ""));
+            let (from, to) = match range.split_once('–') {
+                Some((a, b)) => (a.trim().parse().ok()?, b.trim().parse().ok()?),
+                None => {
+                    let a: usize = range.trim().parse().ok()?;
+                    (a, a)
+                }
+            };
+            let (colour, rest) = detail.split_once(", ").unwrap_or((detail, ""));
+            let percent = rest
+                .strip_prefix("up to ")
+                .and_then(|r| r.split_once(' '))
+                .and_then(|(n, _)| n.parse().ok())
+                .unwrap_or(0);
+            Some(ClipStretch {
+                from,
+                to,
+                colour: colour.trim_end_matches(')').to_owned(),
+                percent,
+            })
+        })
+        .collect();
+    (!found.is_empty()).then_some(found)
+}
+
+/// The frames an export wrote, from its log's `movie:` or `frames:` line ("… (540×960, 300 frames, …").
+fn written_frames(line: &str) -> Option<usize> {
+    if !(line.starts_with("movie:") || line.starts_with("frames:")) {
+        return None;
+    }
+    let (_, after) = line.split_once('×')?;
+    let (_, rest) = after.split_once(", ")?;
+    let (n, _) = rest.split_once(" frame")?;
+    n.trim().parse().ok()
+}
+
+/// Where the colours reached their limit, for the done card: "In Bild 216–322 (Blau, bis 52 % des
+/// Bildes)", or "Im ganzen Video (…)" when one stretch is all of the `written` frames.
+#[must_use]
+pub fn clip_where(lang: crate::text::Lang, s: &[ClipStretch], written: Option<usize>) -> String {
+    let t = lang.t();
+    match (s, written) {
+        ([one], Some(n)) if one.from == 1 && one.to >= n => {
+            let detail = stretches_words(lang, s);
+            let detail = detail
+                .split_once(" (")
+                .map_or(String::new(), |(_, d)| format!(" ({d}"));
+            format!("{}{detail}", t.clip_throughout)
+        }
+        _ => t.clip_in_frames.replace("{frames}", &stretches_words(lang, s)),
+    }
+}
+
+/// The stretches in words for the app: "216–322 (blue, up to 52 % of the picture), 391 (…)".
+#[must_use]
+pub fn stretches_words(lang: crate::text::Lang, s: &[ClipStretch]) -> String {
+    let t = lang.t();
+    s.iter()
+        .map(|c| {
+            let frames = if c.from == c.to {
+                c.from.to_string()
+            } else {
+                format!("{}–{}", c.from, c.to)
+            };
+            let (zero, base) = match c.colour.strip_suffix(" at zero") {
+                Some(b) => (true, b),
+                None => (false, c.colour.as_str()),
+            };
+            let name = match base {
+                "red" => t.colour_red,
+                "green" => t.colour_green,
+                "blue" => t.colour_blue,
+                _ => "",
+            };
+            if name.is_empty() {
+                frames
+            } else {
+                let what = if zero {
+                    t.colour_at_zero.replace("{c}", name)
+                } else {
+                    name.to_owned()
+                };
+                format!(
+                    "{frames} ({})",
+                    t.colour_share
+                        .replace("{c}", &what)
+                        .replace("{p}", &c.percent.to_string())
+                )
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_colour_clip_line_gives_its_frames() {
+        let line = "colour clip:   in 3 frame(s) a colour stops at its limit over more than 10 % of the picture (a channel at zero: 18 %): frames 171–340 (blue, up to 52 % in frame 291), frame 391 (red, up to 11 % in frame 391); a saturated colour";
+        let s = super::colour_clip_frames(line).unwrap_or_default();
+        assert_eq!(
+            s.iter().map(|c| (c.from, c.to)).collect::<Vec<_>>(),
+            vec![(171, 340), (391, 391)]
+        );
+        assert_eq!((s[0].colour.as_str(), s[0].percent), ("blue", 52));
+        assert_eq!(
+            super::stretches_words(crate::text::Lang::De, &s),
+            "171–340 (Blau, bis 52 % des Bildes), 391 (Rot, bis 11 % des Bildes)"
+        );
+        assert_eq!(super::colour_clip_frames("quality:  fine"), None);
+        assert_eq!(
+            super::written_frames("movie:         /x/p.mov (540×360, 40 frames, 1.6 s; rendered in 9.1 s)"),
+            Some(40)
+        );
+        let all = vec![super::ClipStretch {
+            from: 1,
+            to: 40,
+            colour: "blue".into(),
+            percent: 23,
+        }];
+        assert_eq!(
+            super::clip_where(crate::text::Lang::De, &all, Some(40)),
+            "Im ganzen Video (Blau, bis 23 % des Bildes)"
+        );
+    }
+
     use super::*;
+
+    #[test]
+    fn whole_photo_keeps_the_photos_shape() {
+        assert_eq!(whole_photo_size((6000, 4000)), Some((3240, 2160)));
+        assert_eq!(whole_photo_size((4000, 6000)), Some((2160, 3240)));
+        assert_eq!(whole_photo_size((1200, 900)), Some((1200, 900)));
+        assert_eq!(whole_photo_size((3840, 2160)), None);
+    }
 
     #[test]
     fn undo_steps_back_one_drag_at_a_time() {

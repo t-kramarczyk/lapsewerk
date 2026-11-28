@@ -4,7 +4,7 @@ A time-lapse workshop for macOS and Linux: keyframes, exposure ramps (day ↔ ni
 raw development by [LightCraft](https://github.com/storytold/lightcraft). Free, no subscription.
 [Deutsch](README.md)
 
-> Status: pre-release (0.1). Changes: [CHANGELOG.md](CHANGELOG.md) (German).
+> Status: pre-release (0.3). Changes: [CHANGELOG.md](CHANGELOG.md) (German).
 
 ![Analysis of a day-to-night series](docs/screenshots/step2.png)
 
@@ -40,7 +40,8 @@ The app leads through six steps, in German or English:
    (dim stars, take out light pollution, star trails).
 5. **Preview**: play, before/after, a quick test video.
 6. **Export**: ProRes 422 HQ / 4444, HEVC, TIFF, DPX, OpenEXR, HDR (PQ, HLG), timecode with drop frame; resumable,
-   with checksums and an `INFO.txt` for the edit.
+   with checksums and an `INFO.txt` for the edit; sharpened lightly at the video's size (no rings around stars), and
+   a note where a strong colour (mostly a sky) loses its shading at its limit.
 
 Your originals are never changed, and nothing is exported into the photo folder.
 

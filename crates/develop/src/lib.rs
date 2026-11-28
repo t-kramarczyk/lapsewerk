@@ -17,6 +17,7 @@ use lapsewerk_core::exposure::Exposure;
 use lapsewerk_core::keyframes::{self, Curves, Interpolation, Keyframe};
 use lapsewerk_core::sequence::Frame;
 pub mod calibrate;
+pub mod lens_db;
 pub mod masks;
 pub mod project;
 
@@ -254,6 +255,8 @@ pub struct Sequence {
     skipped: Vec<PathBuf>,
     /// Where they were: (before which frame of the sequence, how many).
     skipped_gaps: Vec<(usize, usize)>,
+    /// A lens database's profile corrects the vignetting too ([`Self::set_lens_vignette`]).
+    lens_vignette: bool,
 }
 
 impl Sequence {
@@ -339,6 +342,7 @@ impl Sequence {
             defects: Arc::new(Vec::new()),
             skipped,
             skipped_gaps,
+            lens_vignette: false,
         })
     }
 
@@ -517,6 +521,39 @@ impl Sequence {
         (w > 0 && h > 0).then_some((w, h))
     }
 
+    /// The lens of frame `frame` as named in its file, and how it is corrected: by the file's own
+    /// data (`Some(false)`), by a lens database's profile (`Some(true)`), or not at all (`None`).
+    #[must_use]
+    pub fn lens(&self, frame: usize) -> (String, Option<bool>) {
+        let Some(&id) = self.photos.get(frame) else {
+            return (String::new(), None);
+        };
+        let name = self
+            .session
+            .catalog
+            .photo(id)
+            .map(|p| p.meta.lens.trim().to_owned())
+            .unwrap_or_default();
+        let how = self
+            .session
+            .source_info(id)
+            .lens
+            .map(|l| l.source == lightcraft_engine::develop::LensSource::Database);
+        (name, how)
+    }
+
+    /// Whether a lens database's profile corrects the vignetting too (off: the distortion only;
+    /// the user's choice, `--lens-vignette`). Set before the plan is made.
+    pub fn set_lens_vignette(&mut self, on: bool) {
+        self.lens_vignette = on;
+    }
+
+    /// Whether a lens database's profile corrects the vignetting too.
+    #[must_use]
+    pub fn lens_vignette(&self) -> bool {
+        self.lens_vignette
+    }
+
     /// The frames, in sequence order.
     #[must_use]
     pub fn frames(&self) -> &[Frame] {
@@ -552,6 +589,19 @@ impl Sequence {
             .map(|d| (*d).clone())
             .unwrap_or_default();
         let info = self.session.source_info(id);
+        // A lens profile from the lens database (lensfun) corrects the distortion only: its
+        // vignetting, made for single photos, lifted the corners of a night series against the
+        // look people edited (a city at night, Viltrox 25 mm: corners 0.74 of the centre instead of 0.55),
+        // with them their noise, the deflicker's residue (0.0018 to 0.0033 stops) and the sky's
+        // out-of-gamut blue. The file's own corrections stay as they are.
+        if !self.lens_vignette
+            && info
+                .lens
+                .as_ref()
+                .is_some_and(|l| l.source == lightcraft_engine::develop::LensSource::Database)
+        {
+            d.optics.profile_vignetting = 0.0;
+        }
         lightcraft_engine::pipeline::local::normalize_wb(&mut d, &info);
         if d.wb.mode == WbMode::AsShot {
             d.wb.temp = info.as_shot_temp;
@@ -2913,7 +2963,10 @@ mod tests {
     #[test]
     fn keyframes_share_one_process() {
         use lightcraft_engine::develop::ProcessVersion;
-        let old = DevelopSettings { process: ProcessVersion(2), ..DevelopSettings::default() };
+        let old = DevelopSettings {
+            process: ProcessVersion(2),
+            ..DevelopSettings::default()
+        };
         let new = DevelopSettings::default();
         let mut all = vec![old.clone(), new.clone(), old];
         one_process(&mut all);

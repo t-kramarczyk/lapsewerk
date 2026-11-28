@@ -569,6 +569,60 @@ fn progress_line(
     };
 }
 
+/// Test shots at the series' start or end (a long pause apart): offered to be left out, and
+/// those left out to be taken back.
+fn stray_photos(app: &mut App, ui: &mut egui::Ui) {
+    let t = app.lang.t();
+    let lang = app.lang;
+    let Some(p) = &app.project else { return };
+    let (skip, stray, idle) = (p.skip, p.stray, app.task.is_none());
+    let mut chosen = None;
+    if stray.lead > 0 || stray.trail > 0 {
+        ui.add_space(6.0);
+        if stray.lead > 0 {
+            ui.label(theme::small(
+                crate::text::counted(t.stray_lead, stray.lead)
+                    .replace("{pause}", &crate::text::pause(lang, stray.lead_pause_ms)),
+            ));
+        }
+        if stray.trail > 0 {
+            ui.label(theme::small(
+                crate::text::counted(t.stray_trail, stray.trail)
+                    .replace("{pause}", &crate::text::pause(lang, stray.trail_pause_ms)),
+            ));
+        }
+        if ui
+            .add_enabled(idle, egui::Button::new(t.stray_leave_out))
+            .clicked()
+        {
+            chosen = Some((skip.0 + stray.lead, skip.1 + stray.trail));
+        }
+    }
+    if skip != (0, 0) {
+        ui.add_space(6.0);
+        let mut what = Vec::new();
+        if skip.0 > 0 {
+            what.push(crate::text::counted(t.skipped_first, skip.0));
+        }
+        if skip.1 > 0 {
+            what.push(crate::text::counted(t.skipped_last, skip.1));
+        }
+        ui.label(theme::small(
+            t.skipped_ends
+                .replace("{what}", &what.join(&format!(" {} ", t.and))),
+        ));
+        if ui
+            .add_enabled(idle, egui::Button::new(t.skipped_take_back))
+            .clicked()
+        {
+            chosen = Some((0, 0));
+        }
+    }
+    if let Some(skip) = chosen {
+        app.set_skip(skip);
+    }
+}
+
 /// May the user go on from this step?
 fn can_go_on(app: &App) -> bool {
     let Some(p) = &app.project else { return false };
@@ -593,7 +647,19 @@ fn photos(app: &mut App, ui: &mut egui::Ui) {
     let n = p.frames();
     let interval = p.timing.as_ref().map(|t| t.interval_ms).filter(|ms| *ms > 0);
     // Gaps in the capture and where damaged photos were left out.
-    let gaps = p.timing.as_ref().map_or(0, |t| t.gaps_before.len()) + p.skipped_gaps.len();
+    // A damaged photo left out makes a pause in the capture times too: one place, counted once.
+    let mut places: Vec<usize> = p
+        .timing
+        .as_ref()
+        .map(|t| t.gaps_before.clone())
+        .unwrap_or_default();
+    places.extend(p.skipped_gaps.iter().map(|(at, _)| *at));
+    // The pauses before and after test shots are said beside (as test shots), not as gaps.
+    let n_all = p.frames();
+    places.retain(|at| !(*at <= p.stray.lead || (p.stray.trail > 0 && *at >= n_all - p.stray.trail)));
+    places.sort_unstable();
+    places.dedup();
+    let gaps = places.len();
     let (opened, beside_raws, camera) = (p.seq.is_some(), p.beside_raws, p.camera_data);
     let fps = p.fps;
     let video_len = p.video_seconds_text(app.lang);
@@ -640,7 +706,7 @@ fn photos(app: &mut App, ui: &mut egui::Ui) {
                 fact(
                     ui,
                     t.video_length,
-                    &format!("{} ({} {})", video_len, fps, t.fps_short),
+                    &format!("{} · {} {}", video_len, fps, t.fps_short),
                 );
                 fact(
                     ui,
@@ -657,6 +723,25 @@ fn photos(app: &mut App, ui: &mut egui::Ui) {
                 );
                 if opened {
                     fact(ui, t.camera_data, &format!("{camera} / {n}"));
+                    // How the lens is corrected (asked by a newcomer: was mine?).
+                    if let Some(p) = &app.project {
+                        let (name, how) = &p.lens;
+                        let state = t
+                            .lens_states
+                            .get(match how {
+                                Some(false) => 0,
+                                Some(true) => 1,
+                                None => 2,
+                            })
+                            .copied()
+                            .unwrap_or("");
+                        let text = if name.is_empty() {
+                            state.to_owned()
+                        } else {
+                            format!("{name} – {state}")
+                        };
+                        fact(ui, t.lens_word, &text);
+                    }
                 }
                 // The photos' shape (with the crop from another raw editor), as the video follows it.
                 if let Some(up) = app
@@ -674,6 +759,7 @@ fn photos(app: &mut App, ui: &mut egui::Ui) {
                     ui.add_space(6.0);
                     ui.label(theme::small(with_n(t.raw_jpeg_note, beside_raws)));
                 }
+                stray_photos(app, ui);
                 ui.add_space(14.0);
                 if ui
                     .add_enabled(opened && app.task.is_none(), theme::primary(t.start_analysis))
@@ -740,6 +826,21 @@ fn photos(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn fact(ui: &mut egui::Ui, label: &str, value: &str) {
+    // A long value (a video length with gaps said) goes below its label, wrapped, rather than
+    // pushing the card out of the window.
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let width = |t: &str| {
+        ui.painter()
+            .layout_no_wrap(t.to_owned(), font.clone(), theme::TEXT)
+            .size()
+            .x
+    };
+    if width(label) + width(value) + 24.0 > ui.available_width() {
+        ui.label(theme::muted(label));
+        ui.add(egui::Label::new(RichText::new(value).strong()).wrap());
+        ui.add_space(2.0);
+        return;
+    }
     ui.horizontal(|ui| {
         ui.label(theme::muted(label));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -894,7 +995,8 @@ fn analysis(app: &mut App, ui: &mut egui::Ui) {
                 } else {
                     format!("{} {}", crate::text::num(lang, flicker, 3), t.stops)
                 },
-                [theme::GOOD, theme::WARN, theme::BAD]
+                // Strong is evened out too (and often clouds): told, not alarmed in red.
+                [theme::GOOD, theme::WARN, theme::WARN]
                     .get(level)
                     .copied()
                     .unwrap_or(theme::TEXT),
@@ -935,16 +1037,26 @@ fn analysis(app: &mut App, ui: &mut egui::Ui) {
             hints(app, ui);
             // Picture, slider and curve share what is left: with many hints the curve gets
             // flatter too, rather than running under the status bar.
-            let upright = app
+            let shape = app
                 .project
                 .as_ref()
                 .map(crate::app::ProjectState::preview_video)
-                .is_some_and(|(w, h)| h > w);
-            if upright {
-                // An upright picture beside the curve, not a narrow strip above it (scrolls in a
-                // short window).
-                let h = (ui.available_height() - 12.0).max(360.0);
-                let pic_w = (ui.available_width() * 0.4).max(380.0);
+                .filter(|(w, h)| *w > 0 && *h > 0);
+            let upright = shape.is_some_and(|(w, h)| h > w);
+            // A wide window: the picture beside the curve, large, not a strip above it (with a few
+            // hints a landscape picture was left about 200 px wide there).
+            let wide = ui.available_width() >= 1000.0;
+            if upright || wide {
+                // (scrolls in a short window)
+                let pic_w = if upright {
+                    (ui.available_width() * 0.4).max(380.0)
+                } else {
+                    ui.available_width() * 0.5
+                };
+                let fits = shape.map_or(f32::MAX, |(w, h)| pic_w * h as f32 / w as f32 + 60.0);
+                let h = (ui.available_height() - 12.0)
+                    .min(fits)
+                    .max(if upright { 360.0 } else { 300.0 });
                 ui.horizontal_top(|ui| {
                     ui.allocate_ui_with_layout(Vec2::new(pic_w, h), Layout::top_down(Align::Min), |ui| {
                         ui.set_width(pic_w);
@@ -1004,11 +1116,24 @@ fn hints(app: &mut App, ui: &mut egui::Ui) {
         // Damaged photos left out: said here too, not "no gaps" in green beside it.
         let skipped = !p.skipped_names.is_empty();
         if skipped {
-            warn(
-                ui,
-                t.skipped_hint
-                    .replace("{names}", &crate::text::names_list(lang, &p.skipped_names)),
-            );
+            let mut text = t
+                .skipped_hint
+                .replace("{names}", &crate::text::names_list(lang, &p.skipped_names));
+            // Those at the series' ends: the video is shorter (said here, not only for a moment
+            // after opening).
+            let inside: usize = p.skipped_gaps.iter().map(|(_, m)| m).sum();
+            match p.skipped_names.len().saturating_sub(inside) {
+                0 => {}
+                1 => {
+                    text.push_str(". ");
+                    text.push_str(t.skipped_edge_one);
+                }
+                n => {
+                    text.push_str(". ");
+                    text.push_str(&with_n(t.skipped_edge_many, n));
+                }
+            }
+            warn(ui, text);
         }
         if q.outliers.is_empty() && q.clipped.is_empty() && q.missing.is_empty() {
             if no_exif || shapes.is_some() || skipped {
@@ -1264,6 +1389,7 @@ fn curve(app: &mut App, ui: &mut egui::Ui, height: f32) {
         frame_word: t.frame_word,
         suggested_word: t.suggested_ring,
         suggested_legend: t.suggested_legend,
+        keyframe_legend: t.keyframe_legend,
     };
     if c.show(ui, &mut p.cursor) {
         p.playing = None;
@@ -1341,7 +1467,9 @@ fn keyframes(app: &mut App, ui: &mut egui::Ui) {
                     } else {
                         t.keyframes_taken_suggested
                     };
-                    ui.label(RichText::new(text.replace("{n}", &taken.to_string())).color(theme::MUTED));
+                    ui.label(RichText::new(crate::text::counted(text, taken)).color(theme::MUTED));
+                    // On a line of its own: the export's note about strong colours points here.
+                    ui.label(RichText::new(t.keyframes_colours).color(theme::MUTED));
                 }
             }
             if let Some(p) = &app.project
@@ -1845,6 +1973,8 @@ fn controls(app: &mut App, ui: &mut egui::Ui) {
     let brush = app.brush;
     let app_picking = p.picking_wb;
     let lightcraft_found = app.lightcraft_found;
+    // Nothing edited yet: the base look's highlights and shadows already stand in the sliders.
+    let base_look = p.base_look();
     let histogram = app
         .previews
         .histogram_near(e.frame, crate::preview::Kind::Edit(e.version));
@@ -1853,6 +1983,9 @@ fn controls(app: &mut App, ui: &mut egui::Ui) {
     theme::card().show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.label(theme::title(format!("{} {}", t.frame_word, frame + 1)));
+        if base_look {
+            ui.label(theme::small(t.base_look_note));
+        }
         ui.add_space(4.0);
         // Saving and undoing first, so they stay in view however far the groups are scrolled.
         ui.horizontal_wrapped(|ui| {
@@ -2041,11 +2174,19 @@ fn finishing(app: &mut App, ui: &mut egui::Ui) {
     let t = app.lang.t();
     let lang = app.lang;
     let advanced = app.open_advanced;
-    let (light, recommend) = app
+    let app_night_through = app.project.as_ref().is_some_and(|p| p.night_through);
+    let (light, recommend, keyed, night) = app
         .project
         .as_ref()
-        .and_then(|p| p.analysis.as_ref())
-        .map_or((0.0, false), |a| (a.light_ranges().0, a.day_to_night()));
+        .and_then(|p| p.analysis.as_ref().map(|a| (p, a)))
+        .map_or((0.0, false, false, false), |(p, a)| {
+            (
+                a.light_ranges().0,
+                p.day_night_recommended(a),
+                a.day_to_night() && p.edited_keyframes() >= 2,
+                a.day_to_night() || p.night,
+            )
+        });
     // A picture of the sequence for the framing card: the frame looked at, as shot.
     let thumb = app.project.as_ref().map(|p| Key {
         frame: p.cursor,
@@ -2063,6 +2204,12 @@ fn finishing(app: &mut App, ui: &mut egui::Ui) {
     // For the hand-drawn curve: the saved keyframes, and the frame looked at.
     let keyframes = p.keyframes();
     let cursor = p.cursor;
+    // The automatic lift applies while no keyframe is edited (as the base look).
+    let auto_lift_possible = p.base_look();
+    let lens_profile = p.lens.1 == Some(true);
+    // Dust the preview's corrections found while its removal is off: pointed out at its switch.
+    let dust_seen = p.dust_known.filter(|n| *n > 0);
+    let mut lens_vignette_to = None;
     let column = 780.0f32.min(ui.available_width());
     let pad = ((ui.available_width() - column) / 2.0).max(0.0);
     egui::ScrollArea::vertical()
@@ -2120,6 +2267,9 @@ fn finishing(app: &mut App, ui: &mut egui::Ui) {
                         } else {
                             t.day_night.to_owned()
                         };
+                        if keyed && !day_night {
+                            ui.label(theme::small(t.day_night_keyed));
+                        }
                         option(ui, &name, t.day_night_detail, &mut day_night, |ui, on| {
                             if on {
                                 let mut k = f.keep_light.unwrap_or(crate::app::KEEP_LIGHT_DEFAULT) * 100.0;
@@ -2142,6 +2292,67 @@ fn finishing(app: &mut App, ui: &mut egui::Ui) {
                         } else if f.keep_light.is_none() {
                             f.keep_light = Some(crate::app::KEEP_LIGHT_DEFAULT);
                         }
+                    }
+                    // The automatic lift, while it can apply (nothing edited or drawn): visible, and
+                    // to be turned off for a night that should stay as dark as shot.
+                    if f.brightness.is_empty() && auto_lift_possible {
+                        ui.checkbox(&mut f.auto_bright, t.auto_bright)
+                            .on_hover_text(t.auto_bright_tip);
+                        ui.add_space(4.0);
+                    }
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut f.sharpen, t.sharpen)
+                            .on_hover_text(t.sharpen_tip);
+                        if f.sharpen {
+                            ui.label(theme::small(t.sharpen_soft));
+                            ui.add(
+                                theme::localized(
+                                    egui::Slider::new(&mut f.sharpen_amount, 0.1..=2.0),
+                                    lang,
+                                    2,
+                                )
+                                .step_by(0.05),
+                            )
+                            .on_hover_text(t.sharpen_amount_tip);
+                            ui.label(theme::small(t.sharpen_strong));
+                        }
+                    });
+                    // Into the night, city lights: the sharpening draws faint dark seams beside them
+                    // (testers: half as many with it off), said where it is set, instead of the line
+                    // that promises calm stars.
+                    // Stronger than the light sharpening the app gives a day-into-night series (or any
+                    // on a night throughout): the advice; at it or below: what the app chose and why.
+                    let night_through = app_night_through;
+                    // Day into night: the sharpening can weaken along the light.
+                    if night && !night_through && f.sharpen {
+                        ui.indent("sharpen_fade", |ui| {
+                            ui.checkbox(&mut f.sharpen_fade, t.sharpen_fade);
+                        });
+                    }
+                    if night && f.sharpen && (night_through || !f.sharpen_fade) {
+                        ui.label(RichText::new(t.sharpen_night).color(theme::WARN).size(12.5));
+                    } else if night && f.sharpen {
+                        ui.indent("sharpen_day_night", |ui| {
+                            ui.label(theme::small(t.sharpen_day_night));
+                        });
+                    } else if night {
+                        ui.label(theme::small(t.sharpen_night_off));
+                    } else {
+                        ui.label(theme::small(t.sharpen_hint));
+                    }
+                    ui.add_space(4.0);
+                    // Only with a lens database's profile (the file's own corrections keep theirs).
+                    if lens_profile {
+                        let mut on = f.lens_vignette;
+                        if ui
+                            .checkbox(&mut on, t.lens_vignette)
+                            .on_hover_text(t.lens_vignette_tip)
+                            .changed()
+                        {
+                            lens_vignette_to = Some(on);
+                        }
+                        ui.label(theme::small(t.lens_vignette_hint));
+                        ui.add_space(4.0);
                     }
                     // The brightness shaped by hand, on the curve (as a holy-grail curve).
                     if let Some(a) = p.analysis.as_ref() {
@@ -2261,6 +2472,13 @@ fn finishing(app: &mut App, ui: &mut egui::Ui) {
                         ui.checkbox(&mut f.subpixel, t.subpixel)
                             .on_hover_text(t.subpixel_tip);
                     });
+                    if let Some(n) = dust_seen.filter(|_| !f.dust) {
+                        ui.label(
+                            RichText::new(crate::text::counted(t.dust_seen, n))
+                                .color(theme::WARN)
+                                .size(12.5),
+                        );
+                    }
                     option(ui, t.dust, t.dust_detail, &mut f.dust, |_, _| {});
                     option(
                         ui,
@@ -2328,7 +2546,12 @@ fn finishing(app: &mut App, ui: &mut egui::Ui) {
                         // Where it works: the sky found along the horizon, else the area given.
                         match sky_found {
                             Some(Some(share)) => {
-                                let mut said = t.sky_found.replace("{p}", &format!("{:.0}", share * 100.0));
+                                let mut said = if sky_moving {
+                                    t.sky_found_moving
+                                } else {
+                                    t.sky_found
+                                }
+                                .replace("{p}", &format!("{:.0}", share * 100.0));
                                 // Found in a later frame (none in the first): said, for a camera that moves.
                                 if let Some(i) = sky_frame.filter(|i| *i > 0) {
                                     said.push(' ');
@@ -2412,6 +2635,9 @@ fn finishing(app: &mut App, ui: &mut egui::Ui) {
                 });
             });
         });
+    if let Some(on) = lens_vignette_to {
+        app.set_lens_vignette(on);
+    }
 }
 
 /// Framing and camera move: the kind of move, how far, where, and a picture with the view at the
@@ -2816,6 +3042,28 @@ fn preview_page(app: &mut App, ui: &mut egui::Ui) {
         }
     }
     ui.label(theme::small(t.preview_note));
+    // Dust found while its removal is off: said under the preview, which shows it.
+    let dust = app
+        .project
+        .as_ref()
+        .filter(|p| !p.finish.dust)
+        .and_then(|p| p.dust_known)
+        .filter(|n| *n > 0);
+    if let Some(n) = dust {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(
+                RichText::new(crate::text::counted(t.dust_seen, n))
+                    .color(theme::WARN)
+                    .size(12.5),
+            );
+            if ui.small_button(t.dust_turn_on).clicked()
+                && let Some(p) = app.project.as_mut()
+            {
+                p.finish.dust = true;
+                app.save_project_settings();
+            }
+        });
+    }
     if proof {
         app.start_export(true);
     }
@@ -3043,6 +3291,8 @@ fn export(app: &mut App, ui: &mut egui::Ui) {
     let app_queue_empty = app.queue.jobs.is_empty();
     let mut queue = false;
     let mut verify = false;
+    let mut to_keyframes = false;
+    let mut turn_dust_on = false;
     let app_idle = app.task.is_none();
     let mut clicks = QueueClicks::default();
     let status = task_status(app);
@@ -3055,7 +3305,6 @@ fn export(app: &mut App, ui: &mut egui::Ui) {
         .is_some_and(|p| app.queue.has_target(&p.target()) || p.render_there().is_some_and(|r| r.busy));
     let Some(p) = &mut app.project else { return };
     let mut start = false;
-    let mut reveal = None;
     // A solid bar, always shown: in a low window "Advanced" (HDR, format, the frames' name) goes
     // on below the fold, and that is seen.
     ui.style_mut().spacing.scroll = egui::style::ScrollStyle::solid();
@@ -3082,7 +3331,8 @@ fn export(app: &mut App, ui: &mut egui::Ui) {
                     };
                     // What it delivers: upright for upright photos (all but the upright preset).
                     let (w, h) = p.preset_size(i);
-                    let selected = p.preset == i;
+                    // A size of its own (Advanced) is no preset: no card marked then.
+                    let selected = p.preset == i && p.size.is_none();
                     let frame = egui::Frame::new()
                         .fill(if selected {
                             theme::ACCENT_DIM
@@ -3101,7 +3351,13 @@ fn export(app: &mut App, ui: &mut egui::Ui) {
                         ui.vertical(|ui| {
                             ui.spacing_mut().item_spacing.y = 3.0;
                             ui.label(RichText::new(name).strong());
-                            ui.label(theme::small(format!("{w} × {h}")));
+                            // The chosen card says a high quality (Advanced), so a larger file is no surprise.
+                            let hq = selected && p.hq && p.format().1 == lapsewerk_video::Codec::Hevc;
+                            ui.label(theme::small(if hq {
+                                format!("{w} × {h} · {}", t.quality_high_short)
+                            } else {
+                                format!("{w} × {h}")
+                            }));
                             ui.label(theme::small(detail));
                         });
                     });
@@ -3112,9 +3368,17 @@ fn export(app: &mut App, ui: &mut egui::Ui) {
                     {
                         p.preset = i;
                         p.preset_chosen = true;
+                        // A card's size replaces a size of its own (Advanced).
+                        p.size = None;
                     }
                 }
             });
+            // A size of its own: no card is marked, so the size is said here.
+            if let Some((w, h)) = p.size {
+                ui.label(
+                    RichText::new(t.own_size.replace("{size}", &format!("{w} × {h}"))).color(theme::MUTED),
+                );
+            }
             if p.frames_upright() == Some(true) && p.preset != 3 {
                 // Information, not a problem: grey.
                 ui.label(RichText::new(t.upright_photos).color(theme::MUTED));
@@ -3205,11 +3469,22 @@ fn export(app: &mut App, ui: &mut egui::Ui) {
                         .spacing([14.0, 8.0])
                         .show(ui, |ui| {
                             ui.label(t.size_word);
-                            ui.horizontal_wrapped(|ui| {
+                            // One line (wrapped in a grid row, the last choice ran under the next row).
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 4.0;
                                 ui.selectable_value(&mut p.size, None, t.as_preset);
                                 for (name, size) in crate::app::SIZES {
                                     ui.selectable_value(&mut p.size, Some(size), name)
                                         .on_hover_text(format!("{} × {}", size.0, size.1));
+                                }
+                                // The whole photo, uncut (3:2 or 4:3 where the presets are 16:9).
+                                // The photo's own size (the analysis measures smaller renders, 768 px).
+                                if let Some(whole) = p.developed.and_then(crate::app::whole_photo_size) {
+                                    ui.selectable_value(
+                                        &mut p.size,
+                                        Some(whole),
+                                        format!("{} ({} × {})", t.whole_photo, whole.0, whole.1),
+                                    );
                                 }
                             });
                             ui.end_row();
@@ -3243,6 +3518,17 @@ fn export(app: &mut App, ui: &mut egui::Ui) {
                                 p.rec709 = Some(rec709);
                             }
                             ui.end_row();
+                            // HEVC: a high quality for a master or a client's rate (half again the
+                            // default bits a pixel).
+                            if !p.sequence && p.format().1 == lapsewerk_video::Codec::Hevc {
+                                ui.label(t.quality_word);
+                                ui.vertical(|ui| {
+                                    ui.checkbox(&mut p.hq, t.quality_high)
+                                        .on_hover_text(t.quality_high_tip);
+                                    ui.label(theme::small(t.quality_high_hint));
+                                });
+                                ui.end_row();
+                            }
                             // Where an edit or a broadcast master needs it: the first frame's timecode.
                             if p.timecode_fits() {
                                 ui.label("Timecode");
@@ -3379,6 +3665,27 @@ fn export(app: &mut App, ui: &mut egui::Ui) {
                     }
                 });
             ui.add_space(12.0);
+            // Dust seen and its removal off: said once more before the export.
+            if let Some(n) = p.dust_known.filter(|n| *n > 0 && !p.finish.dust) {
+                // The text wrapped beside its button (on one row it pushed the button below).
+                ui.horizontal(|ui| {
+                    ui.allocate_ui(egui::vec2(620.0, 40.0), |ui| {
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(crate::text::counted(t.dust_seen, n))
+                                    .color(theme::WARN)
+                                    .size(12.5),
+                            )
+                            .wrap(),
+                        );
+                    });
+                    if ui.small_button(t.dust_turn_on).clicked() && !exporting {
+                        p.finish.dust = true;
+                        turn_dust_on = true;
+                    }
+                });
+                ui.add_space(6.0);
+            }
             theme::card().show(ui, |ui| {
                 // One width whatever it holds (a long resume line widened it by 100 px).
                 ui.set_width(ui.available_width().min(756.0));
@@ -3538,6 +3845,15 @@ fn export(app: &mut App, ui: &mut egui::Ui) {
                                 .color(color)
                                 .size(13.0),
                             );
+                            // Frames someone edited, set aside by a resume: not part of the delivery.
+                            let kept = p.kept_files();
+                            if kept > 0 {
+                                ui.label(
+                                    RichText::new(crate::text::counted(t.target_kept, kept))
+                                        .color(theme::WARN)
+                                        .size(12.5),
+                                );
+                            }
                             // Finished here: only whether every frame is there and whole is seen
                             // without reading them; checking reads each against its checksum.
                             // A stopped one too: checked as far as it goes (the sums noted as written).
@@ -3662,6 +3978,20 @@ fn export(app: &mut App, ui: &mut egui::Ui) {
                         .strong(),
                     );
                     ui.label(theme::muted(done.display().to_string()));
+                    if let Some(clip) = &p.colour_clip {
+                        ui.label(
+                            RichText::new(
+                                t.export_colour_clip.replace(
+                                    "{where}",
+                                    &crate::app::clip_where(lang, clip, p.colour_clip_of),
+                                ),
+                            )
+                            .color(theme::WARN),
+                        );
+                        if ui.button(t.to_step3).clicked() {
+                            to_keyframes = true;
+                        }
+                    }
                     if !p.skipped_names.is_empty() {
                         ui.label(
                             RichText::new(
@@ -3670,6 +4000,17 @@ fn export(app: &mut App, ui: &mut egui::Ui) {
                             )
                             .color(theme::WARN),
                         );
+                    }
+                    // Free software: a quiet way to say thanks, once the film is there.
+                    if !hurt {
+                        ui.add_space(4.0);
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(theme::small(t.coffee_line));
+                            ui.hyperlink_to(
+                                RichText::new(t.coffee_link).color(theme::ACCENT).size(12.5),
+                                crate::text::COFFEE_URL,
+                            );
+                        });
                     }
                     // A movie: what it delivers, as the command line says it (no INFO.txt).
                     if !frames && let Some(d) = &p.delivered {
@@ -3710,15 +4051,9 @@ fn export(app: &mut App, ui: &mut egui::Ui) {
                             );
                         }
                     }
+                    // "Show in folder" and "Make again" are the bottom bar's (not twice, and the card
+                    // stays short enough to be seen whole).
                     ui.horizontal(|ui| {
-                        let show = if hurt {
-                            theme::secondary(t.show_in_folder)
-                        } else {
-                            theme::primary(t.show_in_folder)
-                        };
-                        if ui.add(show).clicked() {
-                            reveal = Some(done.clone());
-                        }
                         // A frame sequence checked against its checksums (a copy, a drive, a while).
                         if p.sequence
                             && ui
@@ -3738,23 +4073,7 @@ fn export(app: &mut App, ui: &mut egui::Ui) {
                             p.resume_next = true;
                             start = true;
                         }
-                        // Anew: asked first what to do with what is there.
-                        if ui.add(theme::secondary(t.export_again)).clicked() {
-                            p.exported = None;
-                            p.ask_overwrite = true;
-                        }
                     });
-                    // Free software: a quiet way to say thanks, once the film is there.
-                    if !hurt {
-                        ui.add_space(6.0);
-                        ui.horizontal_wrapped(|ui| {
-                            ui.label(theme::small(t.coffee_line));
-                            ui.hyperlink_to(
-                                RichText::new(t.coffee_link).color(theme::ACCENT).size(12.5),
-                                crate::text::COFFEE_URL,
-                            );
-                        });
-                    }
                     if let Some((ok, bad)) = &p.verified {
                         if bad.is_empty() {
                             ui.label(
@@ -3953,8 +4272,11 @@ fn export(app: &mut App, ui: &mut egui::Ui) {
         app.start_verify();
     }
     clicks.apply(&mut app.queue);
-    if let Some(path) = reveal {
-        App::reveal(&path);
+    if turn_dust_on {
+        app.save_project_settings();
+    }
+    if to_keyframes {
+        app.go(3);
     }
 }
 

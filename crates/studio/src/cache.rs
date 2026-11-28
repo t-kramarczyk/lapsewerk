@@ -141,7 +141,7 @@ fn compare_frames(new: &[String], old: &[String], clipped: &[Option<f32>]) -> (V
 /// What the analysis depends on besides the keyframes: the version, the measuring settings and
 /// the photos.
 fn photos_text(seq: &Sequence, opts: &MeasureSettings) -> String {
-    let mut text = setup_text(opts);
+    let mut text = setup_text(opts, seq.lens_vignette());
     for p in photo_prints(seq) {
         text.push(' ');
         text.push_str(&p);
@@ -150,14 +150,18 @@ fn photos_text(seq: &Sequence, opts: &MeasureSettings) -> String {
 }
 
 /// The version and the measuring settings an analysis was made with.
-fn setup_text(opts: &MeasureSettings) -> String {
+fn setup_text(opts: &MeasureSettings, lens_vignette: bool) -> String {
     format!(
-        "v{VERSION} {} {} edge {} reference {:?} stabilize {}",
+        "v{VERSION} {} {} edge {} reference {:?} stabilize {} lens {}{}",
         env!("CARGO_PKG_VERSION"),
         build_print(),
         opts.edge,
         opts.reference,
-        opts.stabilize
+        opts.stabilize,
+        // The lens database in use: another one corrects the frames otherwise (measured anew, not
+        // taken for edited keyframes).
+        lapsewerk_develop::lens_db::words(),
+        if lens_vignette { " with vignetting" } else { "" }
     )
 }
 
@@ -190,7 +194,7 @@ fn photo_prints(seq: &Sequence) -> Vec<String> {
 /// Which photos changed since the analysis `cached` (by frame), when it was measured the same way
 /// (version, settings) from as many photos; `None` otherwise (all are measured again then).
 fn changed_photos(cached: &Value, seq: &Sequence, opts: &MeasureSettings) -> Option<Vec<bool>> {
-    let setup = lapsewerk_video::frames::fingerprint(&setup_text(opts));
+    let setup = lapsewerk_video::frames::fingerprint(&setup_text(opts, seq.lens_vignette()));
     if cached.get("setup").and_then(Value::as_str) != Some(setup.as_str()) {
         return None;
     }
@@ -218,7 +222,7 @@ fn changed_photos(cached: &Value, seq: &Sequence, opts: &MeasureSettings) -> Opt
 
 /// Why an analysis kept from before no longer holds for the photos (said before measuring all).
 fn why_measured_again(cached: &Value, seq: &Sequence, opts: &MeasureSettings) -> String {
-    let setup = lapsewerk_video::frames::fingerprint(&setup_text(opts));
+    let setup = lapsewerk_video::frames::fingerprint(&setup_text(opts, seq.lens_vignette()));
     if cached
         .get("setup")
         .and_then(Value::as_str)
@@ -409,7 +413,10 @@ pub fn analyse_cached(
         o.insert("photos".into(), Value::String(photos));
         o.insert(
             "setup".into(),
-            Value::String(lapsewerk_video::frames::fingerprint(&setup_text(opts))),
+            Value::String(lapsewerk_video::frames::fingerprint(&setup_text(
+                opts,
+                seq.lens_vignette(),
+            ))),
         );
         o.insert(
             "photoPrints".into(),
@@ -692,9 +699,11 @@ pub fn edited_keyframes_in(seq: &Sequence, folder: &Path) -> Vec<usize> {
         _ => Vec::new(),
     };
     with_marked(seq, &mut untouched);
+    // A sidecar nothing can read (damaged, or another program's) edits nothing.
+    let unreadable = seq.unreadable_sidecars();
     seq.keyframe_frames()
         .into_iter()
-        .filter(|f| !untouched.iter().any(|(u, _)| u == f))
+        .filter(|f| !untouched.iter().any(|(u, _)| u == f) && !unreadable.contains(f))
         .collect()
 }
 
@@ -837,7 +846,7 @@ pub fn correct_cached(
         return crate::correct(seq, plan, a, opts, render, rep);
     }
     let key = format!(
-        "{} {:?} {} {:?} {:?}{}{} {:.4}",
+        "{} {:?} {} {:?} {:?}{}{}{} {:.4}",
         key(seq, plan, opts),
         render.deflicker,
         render.passes,
@@ -845,6 +854,12 @@ pub fn correct_cached(
         render.brightness,
         if render.auto_brightness { " auto" } else { "" },
         if render.base_look { " look" } else { "" },
+        // Without --keep-light the camera's smoothed course is kept (since 0.3): worked out anew.
+        if render.keep_light.is_none() {
+            " exposed"
+        } else {
+            ""
+        },
         // The video's shape: a crop wider than it is made taller (`framed_plan`).
         render.video.width as f64 / render.video.height.max(1) as f64
     );
@@ -869,10 +884,36 @@ pub fn correct_cached(
         })
         // Written whole by Lapsewerk: a file cut short or edited by hand is worked out anew.
         && v.get("check").and_then(Value::as_str) == Some(corrections_check(&offsets, &brightening, size).as_str())
+        // The automatic lift worked out then (a brightness point of its own), so a resume and the
+        // delivery's settings name it as the first render did; a file from before it was kept is
+        // worked out anew.
+        && let Some(lift) = lift_of(&v, render)
     {
         rep.note("corrections:   as worked out before (same photos, keyframes and settings)");
         let mut r = render.clone();
+        if let Some(lift) = lift {
+            r.brightness = lift;
+        }
         crate::upright(&mut r, size);
+        // Dust found while its removal was off, kept with the corrections (the app says it);
+        // not looked for when they were worked out (the command line, before): looked for now
+        // and kept, so a hit says it as a fresh run would.
+        let mut dust_seen = v.get("dustSeen").and_then(Value::as_u64).map(|n| n as usize);
+        if dust_seen.is_none() && opts.dust_hint {
+            // The plan as the corrections render it (base look, crop fitted), or the count differs.
+            let looked = crate::framed_plan(seq, plan, r.base_look, (r.video.width, r.video.height));
+            dust_seen = crate::dust_count(seq, &looked, &offsets, &r, rep);
+            if let Some(n) = dust_seen {
+                let mut kept = v.clone();
+                if let Some(o) = kept.as_object_mut() {
+                    o.insert("dustSeen".to_owned(), json!(n));
+                }
+                let tmp = folder.join(format!("{CORRECTIONS_FILE}.{}.tmp", std::process::id()));
+                if std::fs::write(&tmp, kept.to_string()).is_ok() && std::fs::rename(&tmp, &path).is_err() {
+                    let _ = std::fs::remove_file(&tmp);
+                }
+            }
+        }
         return Ok(crate::Corrected {
             offsets,
             brightening,
@@ -881,6 +922,7 @@ pub fn correct_cached(
             verified: None,
             verified_seen: None,
             dust: None,
+            dust_seen,
             size,
             render: r,
         });
@@ -892,6 +934,8 @@ pub fn correct_cached(
         "brightening": nums(&c.brightening),
         "size": [c.size.0, c.size.1],
         "check": corrections_check(&c.offsets, &c.brightening, c.size),
+        "lift": c.render.brightness.iter().map(|(f, b)| json!([f, b])).collect::<Vec<_>>(),
+        "dustSeen": c.dust_seen,
     });
     let tmp = folder.join(format!("{CORRECTIONS_FILE}.{}.tmp", std::process::id()));
     if std::fs::write(&tmp, v.to_string()).is_ok() && std::fs::rename(&tmp, &path).is_err() {
@@ -1063,6 +1107,27 @@ fn plausible(a: &Analysis) -> bool {
         && a.checks
             .iter()
             .all(|c| fine(c.reported) && fine(c.used) && c.measured.is_none_or(fine))
+}
+
+/// The automatic lift kept with the corrections, for a render that asks for it: `Some(None)` when
+/// there is nothing to restore (no lift asked for, or points drawn by hand), `Some(Some(points))`
+/// when kept, `None` when the file has none (written before the lift was kept).
+fn lift_of(v: &Value, render: &crate::RenderArgs) -> Option<Option<Vec<(usize, f64)>>> {
+    if !render.auto_brightness || !render.brightness.is_empty() {
+        return Some(None);
+    }
+    let points = v
+        .get("lift")?
+        .as_array()?
+        .iter()
+        .map(|p| {
+            let p = p.as_array()?;
+            let f = usize::try_from(p.first()?.as_u64()?).ok()?;
+            let b = p.get(1)?.as_f64().filter(|b| b.is_finite() && b.abs() <= 64.0)?;
+            Some((f, b))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(Some(points))
 }
 
 #[cfg(test)]

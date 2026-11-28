@@ -141,8 +141,14 @@ pub fn encode_exr_with(
     attr("pixelAspectRatio", "float", &1f32.to_le_bytes());
     attr("screenWindowCenter", "v2f", &[0; 8]);
     attr("screenWindowWidth", "float", &1f32.to_le_bytes());
+    // HDR frames (Rec. 2020): 1.0 is SDR white at 203 cd/m² (ITU-R BT.2408), said in the file so
+    // grading and compositing tools scale them themselves (OpenEXR's `whiteLuminance`).
+    let hdr = chroma.0 == Chromaticities::REC2020.0;
     let chroma: Vec<u8> = chroma.0.iter().flat_map(|v| v.to_le_bytes()).collect();
     attr("chromaticities", "chromaticities", &chroma);
+    if hdr {
+        attr("whiteLuminance", "float", &203f32.to_le_bytes());
+    }
     if let Some((n, d)) = timing.fps {
         let mut v = i32::try_from(n).ok()?.to_le_bytes().to_vec();
         v.extend_from_slice(&d.to_le_bytes());

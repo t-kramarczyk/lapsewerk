@@ -18,5 +18,10 @@ RUSTFLAGS="${RUSTFLAGS:-} \
 --remap-path-prefix=$here=lapsewerk"
 export RUSTFLAGS
 cd "$here"
-cargo build --release -p lapsewerk-cli -p lapsewerk-app "$@"
-echo "built: target/release/lapsewerk, target/release/lapsewerk-app"
+# This checkout's target folder, or the one asked for in so many words (LAPSEWERK_TARGET_DIR, the app bundle's):
+# an inherited CARGO_TARGET_DIR (another worktree's) built there and left target/release here as it was, while
+# this script said "built" (two test rounds ran on old binaries).
+export CARGO_TARGET_DIR="${LAPSEWERK_TARGET_DIR:-$here/target}"
+# --locked: a Cargo.lock that does not match Cargo.toml stops here (a commit once carried the wrong one).
+cargo build --release --locked -p lapsewerk-cli -p lapsewerk-app "$@"
+echo "built: $CARGO_TARGET_DIR/release/lapsewerk, $CARGO_TARGET_DIR/release/lapsewerk-app"

@@ -63,6 +63,39 @@ pub fn local_linear(values: &[f64], weights: Option<&[f64]>, sigma: f64) -> Vec<
     out
 }
 
+/// How far each end (first, last) of a series follows the narrow line rather than the wide one:
+/// 0 while their difference at the end frame is within twice the narrow line's own uncertainty
+/// there (the series' noise, by the median absolute deviation from the wide line, over the frames
+/// a one-sided window of `narrow_sigma` holds), 1 from four times it.
+fn end_weights(values: &[f64], wide: &[f64], narrow: &[f64], narrow_sigma: f64) -> (f64, f64) {
+    let mut dev: Vec<f64> = values
+        .iter()
+        .zip(wide)
+        .map(|(v, w)| (v - w).abs())
+        .filter(|d| d.is_finite())
+        .collect();
+    if dev.len() < 8 {
+        return (0.0, 0.0);
+    }
+    dev.sort_by(f64::total_cmp);
+    let noise = dev.get(dev.len() / 2).copied().unwrap_or(0.0) * 1.4826;
+    let uncertainty = 2.0 * noise / (1.25 * narrow_sigma).sqrt();
+    let at = |i: usize| {
+        let (Some(w), Some(n)) = (wide.get(i), narrow.get(i)) else {
+            return 0.0;
+        };
+        let d = (n - w).abs();
+        if !d.is_finite() {
+            return 0.0;
+        }
+        if uncertainty <= 1e-12 {
+            return if d > 1e-9 { 1.0 } else { 0.0 };
+        }
+        ((d - 2.0 * uncertainty) / (2.0 * uncertainty)).clamp(0.0, 1.0)
+    };
+    (at(0), at(values.len() - 1))
+}
+
 /// Gaussian-weighted local quadratic regression of `values` at every index: as [`local_linear`],
 /// but a bend (the knee where a ramp ends, a moonrise) is followed instead of rounded off.
 #[must_use]
@@ -80,6 +113,15 @@ pub fn local_quadratic(values: &[f64], weights: Option<&[f64]>, sigma: f64) -> V
         .map(|d| (-((d * d) as f64) * inv_two_sigma2).exp())
         .collect();
     let linear = local_linear(values, weights, sigma);
+    // At the very ends a wide line, fitted to one side, carries on the slope of frames long gone:
+    // where the light levels off in the last frames (a city's night: its steps fell from 0.02 to
+    // 0.004 stops), the line ran on downwards and the corrections grew to 0.08 stops in the last
+    // three frames, a step out of the movie's end. A line a third as wide follows the end, but
+    // where the frames flicker strongly it would follow the flicker: it is taken only as far as
+    // its difference from the wide line stands out of the series' noise ([`end_weights`]).
+    let narrow_sigma = (sigma / 3.0).max(2.0);
+    let narrow = local_linear(values, weights, narrow_sigma);
+    let ends = end_weights(values, &linear, &narrow, narrow_sigma);
     let det3 = |m: [[f64; 3]; 3]| {
         m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
             + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
@@ -119,7 +161,11 @@ pub fn local_quadratic(values: &[f64], weights: Option<&[f64]>, sigma: f64) -> V
                 row[0] = y;
             }
             let a = det3(ma) / d;
-            let line = linear.get(i).copied().unwrap_or(f64::NAN);
+            let inside = (i.min(n - 1 - i) as f64 / (radius as f64 / 4.0).max(1.0)).clamp(0.0, 1.0);
+            let wide = linear.get(i).copied().unwrap_or(f64::NAN);
+            let near = narrow.get(i).copied().filter(|v| v.is_finite()).unwrap_or(wide);
+            let w = if i < n / 2 { ends.0 } else { ends.1 };
+            let line = wide + w * (1.0 - inside) * (near - wide);
             if !a.is_finite() {
                 return line;
             }
@@ -127,7 +173,6 @@ pub fn local_quadratic(values: &[f64], weights: Option<&[f64]>, sigma: f64) -> V
             // there, smoothly (no step in the corrections where it changes).
             // Only the outermost frames (a quarter of the kernel's reach): further in, the line
             // would round off a knee near the start again (TNT's 0.0050 became 0.0240).
-            let inside = (i.min(n - 1 - i) as f64 / (radius as f64 / 4.0).max(1.0)).clamp(0.0, 1.0);
             line + inside * (a - line)
         })
         .collect()
